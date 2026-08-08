@@ -1,31 +1,55 @@
-# Agent Network MVP
+# Agen MVP
 
-Agent Network is an autonomous personal agent platform with a trust layer for agent-to-agent interactions.
+Agen is an autonomous personal-agent platform. A user's private agent understands requests, finds trusted service agents, coordinates approved work, and returns the result.
 
-This repository is split into two apps:
+## Applications
 
-- `backend/`: Django API, domain models, and admin surface
-- `frontend/`: Next.js App Router UI for the public site and product experience
+- `backend/`: Django REST API, session authentication, agent identity, and trust ledger
+- `frontend/`: Next.js landing page, authentication, personal-agent workspace, and Agent Studio
 
-## MVP Scope
+## Local Setup
 
-- Personal agent overview
-- Business agent directory
-- Trust and verification metadata
-- Dashboard metrics
-- Agent profile pages
-- Monochrome premium UI inspired by the supplied design files
+### Backend
 
-## Project Structure
-
-```text
-backend/
-frontend/
+```powershell
+cd backend
+python -m venv venv
+venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+python manage.py migrate
+python manage.py runserver
 ```
 
-## Next Steps
+The API runs at `http://localhost:8000`.
 
-1. Install backend dependencies and run Django migrations.
-2. Install frontend dependencies and run the Next.js app.
-3. Connect the frontend to the backend API.
+### Frontend
 
+```powershell
+cd frontend
+npm install
+Copy-Item .env.example .env.local
+npm run dev
+```
+
+The web application runs at `http://localhost:3000`.
+
+Use the same hostname for both applications. For example, do not mix `localhost` and `127.0.0.1`, because browser session cookies are hostname-specific.
+
+## Authentication Flow
+
+1. The frontend requests a CSRF token from Django.
+2. Signup creates the user, an authenticated session, and one personal agent atomically.
+3. Django stores the session identifier in an HttpOnly cookie.
+4. The protected workspace checks `/api/auth/me/` before rendering.
+5. Business agents created in Agent Studio are owned by the authenticated user and persisted in Django.
+
+## Verification
+
+```powershell
+cd backend
+python manage.py test apps.accounts apps.agents
+
+cd ..\frontend
+npx tsc --noEmit
+```

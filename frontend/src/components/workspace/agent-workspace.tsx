@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, KeyboardEvent, useState } from "react";
+import { useRouter } from "next/navigation";
+import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
 
 import { Icon } from "@/components/workspace/icons";
+import { ApiError, AuthSession, createBusinessAgent, getAuthSession, logoutAccount } from "@/lib/client-api";
 
 type WorkspaceTab = "agent" | "tasks" | "studio" | "activity" | "settings";
 
@@ -27,6 +29,9 @@ const tabTitles: Record<WorkspaceTab, { eyebrow: string; title: string }> = {
 };
 
 export function AgentWorkspace() {
+  const router = useRouter();
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [checkingSession, setCheckingSession] = useState(true);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("agent");
   const [message, setMessage] = useState("");
   const [request, setRequest] = useState("");
@@ -34,6 +39,28 @@ export function AgentWorkspace() {
   const [listening, setListening] = useState(false);
   const [approved, setApproved] = useState(false);
   const hasTask = Boolean(request);
+
+  useEffect(() => {
+    let active = true;
+    getAuthSession()
+      .then((authSession) => {
+        if (active) setSession(authSession);
+      })
+      .catch(() => {
+        if (active) router.replace("/auth");
+      })
+      .finally(() => {
+        if (active) setCheckingSession(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [router]);
+
+  async function signOut() {
+    await logoutAccount();
+    router.replace("/");
+  }
 
   function selectTab(tab: WorkspaceTab) {
     setActiveTab(tab);
@@ -57,6 +84,11 @@ export function AgentWorkspace() {
   }
 
   const title = tabTitles[activeTab];
+  const initials = session?.user.display_name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "AG";
+
+  if (checkingSession || !session) {
+    return <div className="auth-loading"><span><Icon name="spark" /></span><p>Opening your personal agent...</p></div>;
+  }
 
   return (
     <div className="dashboard-shell">
@@ -80,7 +112,7 @@ export function AgentWorkspace() {
           <div><p>{title.eyebrow}</p><h1>{title.title}</h1></div>
           <div className="dashboard-heading__actions">
             <button type="button" className="dashboard-icon-button" aria-label="Notifications"><Icon name="bell" /><i /></button>
-            <button type="button" className="dashboard-avatar" aria-label="Open profile">AS</button>
+            <button type="button" className="dashboard-avatar" aria-label="Open profile" onClick={() => selectTab("settings")}>{initials}</button>
           </div>
         </header>
 
@@ -104,7 +136,7 @@ export function AgentWorkspace() {
         {activeTab === "tasks" ? <TasksView approved={approved} hasTask={hasTask} request={request} onApprove={() => setApproved(true)} onAskAgent={() => selectTab("agent")} /> : null}
         {activeTab === "studio" ? <BusinessAgentsView /> : null}
         {activeTab === "activity" ? <ActivityView hasTask={hasTask} /> : null}
-        {activeTab === "settings" ? <SettingsView autoConnect={autoConnect} onToggleAutoConnect={() => setAutoConnect((value) => !value)} /> : null}
+        {activeTab === "settings" ? <SettingsView autoConnect={autoConnect} email={session.user.email} onSignOut={signOut} onToggleAutoConnect={() => setAutoConnect((value) => !value)} /> : null}
       </main>
 
       <nav className="dashboard-mobile-nav" aria-label="Dashboard navigation">
@@ -216,20 +248,43 @@ function ActivityView({ hasTask }: { hasTask: boolean }) {
   return <section className="tab-view"><div className="view-panel"><div className="view-panel__head"><div><span className="view-kicker">Audit trail</span><h2>Recent activity</h2></div><button type="button">Export</button></div><div className="activity-feed">{hasTask ? <ActivityItem icon="spark" title="New request received" detail="Agen understood your goal and created a task plan." time="Just now" /> : null}<ActivityItem icon="shield" title="Privacy check completed" detail="Connection permissions and sharing preferences are up to date." time="Today, 9:30" /><ActivityItem icon="tasks" title="Restaurant booking completed" detail="Agen reserved a table for two and added it to your schedule." time="Yesterday" /><ActivityItem icon="activity" title="Weekly summary prepared" detail="You saved an estimated 2.1 hours across four completed tasks." time="Mon, 8:00" /></div></div></section>;
 }
 
-function SettingsView({ autoConnect, onToggleAutoConnect }: { autoConnect: boolean; onToggleAutoConnect: () => void }) {
-  return <section className="tab-view settings-grid"><div className="view-panel"><span className="view-kicker">Connections</span><h2>How Agen works with others</h2><div className="setting-row"><div><strong>Auto-connect</strong><p>Allow Agen to connect with verified agents without asking each time.</p></div><button type="button" className="toggle" aria-label="Toggle auto-connect" aria-pressed={autoConnect} onClick={onToggleAutoConnect} /></div><div className="setting-row"><div><strong>Minimum trust score</strong><p>Only connect with agents that meet your trust threshold.</p></div><button type="button" className="setting-value">95% <Icon name="chevron" /></button></div></div><div className="view-panel"><span className="view-kicker">Privacy</span><h2>Data and permissions</h2><div className="setting-row"><div><strong>Task-only sharing</strong><p>Share only the minimum information required for a task.</p></div><span className="setting-status">On</span></div><div className="setting-row"><div><strong>Activity history</strong><p>Review or remove the actions Agen has taken for you.</p></div><button type="button" className="setting-value">Manage <Icon name="chevron" /></button></div></div></section>;
+function SettingsView({ autoConnect, email, onSignOut, onToggleAutoConnect }: { autoConnect: boolean; email: string; onSignOut: () => void; onToggleAutoConnect: () => void }) {
+  return <section className="tab-view settings-grid"><div className="view-panel"><span className="view-kicker">Connections</span><h2>How Agen works with others</h2><div className="setting-row"><div><strong>Auto-connect</strong><p>Allow Agen to connect with verified agents without asking each time.</p></div><button type="button" className="toggle" aria-label="Toggle auto-connect" aria-pressed={autoConnect} onClick={onToggleAutoConnect} /></div><div className="setting-row"><div><strong>Minimum trust score</strong><p>Only connect with agents that meet your trust threshold.</p></div><button type="button" className="setting-value">95% <Icon name="chevron" /></button></div></div><div className="view-panel"><span className="view-kicker">Account and privacy</span><h2>{email}</h2><div className="setting-row"><div><strong>Task-only sharing</strong><p>Share only the minimum information required for a task.</p></div><span className="setting-status">On</span></div><div className="setting-row"><div><strong>Sign out</strong><p>End this session on the current device.</p></div><button type="button" className="setting-value setting-value--danger" onClick={onSignOut}>Sign out <Icon name="chevron" /></button></div></div></section>;
 }
 
 function BusinessAgentsView() {
   const [mode, setMode] = useState<"managed" | "external">("managed");
   const [createdAgent, setCreatedAgent] = useState<{ name: string; company: string; id: string } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
-  function submitBusinessAgent(event: FormEvent<HTMLFormElement>) {
+  async function submitBusinessAgent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setSubmitting(true);
+    setError("");
     const form = new FormData(event.currentTarget);
     const name = String(form.get("name") || "Business agent");
     const company = String(form.get("company") || "Your business");
-    setCreatedAgent({ name, company, id: crypto.randomUUID() });
+    try {
+      const agent = await createBusinessAgent({
+        name,
+        company_name: company,
+        category: String(form.get("category") || "Other"),
+        hosting_type: mode,
+        endpoint: mode === "external" ? String(form.get("endpoint") || "") : undefined,
+        summary: mode === "managed" ? String(form.get("summary") || "") : undefined,
+        capabilities: String(form.get("capabilities") || "").split(",").map((item) => item.trim()).filter(Boolean),
+      });
+      setCreatedAgent({ name: agent.name, company: agent.company_name, id: agent.agent_id });
+    } catch (caught) {
+      const apiError = caught as ApiError;
+      const fieldMessage = apiError.fields
+        ? Object.values(apiError.fields).flat().find((value) => typeof value === "string")
+        : undefined;
+      setError(fieldMessage || apiError.message);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   if (createdAgent) {
@@ -263,7 +318,8 @@ function BusinessAgentsView() {
           {mode === "external" ? <label className="studio-field--wide"><span>Agent endpoint</span><div className="endpoint-input"><Icon name="link" /><input name="endpoint" type="url" required pattern="https://.*" placeholder="https://api.yourbusiness.com/agent" /></div><small>HTTPS is required. We will verify ownership with a signed challenge.</small></label> : <label className="studio-field--wide"><span>What should this agent do?</span><textarea name="summary" required rows={3} placeholder="Describe the requests it handles and the outcomes it can deliver." /></label>}
         </div>
         <div className="studio-notice"><Icon name="shield" /><p><strong>Trust starts with verification</strong><span>This agent begins at a baseline score of 40. Identity, successful work, attestations, and disputes change its score over time.</span></p></div>
-        <div className="studio-form__footer"><span>You can finish configuration later.</span><button type="submit">Create agent identity <Icon name="chevron" /></button></div>
+        {error ? <div className="auth-error studio-error" role="alert">{error}</div> : null}
+        <div className="studio-form__footer"><span>You can finish configuration later.</span><button type="submit" disabled={submitting}>{submitting ? "Creating identity..." : "Create agent identity"} <Icon name="chevron" /></button></div>
       </form>
     </section>
   );

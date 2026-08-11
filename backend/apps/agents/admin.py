@@ -3,8 +3,8 @@ from django.utils import timezone
 
 from .models import (
     Agent, AgentActivity, AgentAuditEvent, AgentCatalogItem, AgentConnection, AgentKnowledgeSource,
-    AgentTestRun, AgentToolConnection, DataGrant, ManagedAgentProfile, Task, TaskCandidate, TaskResult,
-    TaskStep, TrustEvent,
+    AgentTestRun, AgentToolConnection, DataGrant, GuestAgentMessage, ManagedAgentProfile, PublicAgentProfile,
+    Task, TaskCandidate, TaskResult, TaskStep, TrustEvent,
 )
 
 
@@ -138,3 +138,20 @@ class AgentAuditEventAdmin(admin.ModelAdmin):
     list_display = ("action", "agent", "actor", "created_at")
     search_fields = ("action", "detail", "agent__name")
     readonly_fields = ("event_id", "created_at")
+
+
+@admin.register(PublicAgentProfile)
+class PublicAgentProfileAdmin(admin.ModelAdmin):
+    list_display = ("agent", "visibility", "public_chat_enabled", "guest_daily_limit", "updated_at")
+    list_filter = ("visibility", "public_chat_enabled", "show_catalog")
+    search_fields = ("agent__name", "agent__network_handle", "tagline")
+
+
+@admin.register(GuestAgentMessage)
+class GuestAgentMessageAdmin(admin.ModelAdmin):
+    list_display = ("message_id", "agent", "session_id", "created_at")
+    search_fields = ("message_id", "agent__network_handle", "session_id")
+    readonly_fields = (
+        "message_id", "agent", "session_id", "ip_hash", "prompt_ciphertext", "response_ciphertext",
+        "matched_sources", "created_at",
+    )

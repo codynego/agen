@@ -33,6 +33,13 @@ from .managed_views import (
     ManagedAgentToolView,
     ManagedAgentVerificationView,
 )
+from .public_agent_views import (
+    OwnerPublicProfileView,
+    PublicAgentGuestChatView,
+    PublicAgentManifestView,
+    PublicAgentProfileView,
+    PublicAgentQrView,
+)
 
 urlpatterns = [
     path("dashboard/", DashboardView.as_view(), name="dashboard"),
@@ -60,6 +67,11 @@ urlpatterns = [
     path("agents/business/<uuid:agent_id>/tools/<uuid:connection_id>/", ManagedAgentToolDeleteView.as_view(), name="managed-agent-tool-delete"),
     path("agents/business/<uuid:agent_id>/sandbox/", ManagedAgentSandboxView.as_view(), name="managed-agent-sandbox"),
     path("agents/business/<uuid:agent_id>/activate/", ManagedAgentActivationView.as_view(), name="managed-agent-activate"),
+    path("agents/business/<uuid:agent_id>/public-profile/", OwnerPublicProfileView.as_view(), name="owner-public-profile"),
+    path("public/agents/<slug:network_handle>/", PublicAgentProfileView.as_view(), name="public-agent-profile"),
+    path("public/agents/<slug:network_handle>/manifest/", PublicAgentManifestView.as_view(), name="public-agent-manifest"),
+    path("public/agents/<slug:network_handle>/qr/", PublicAgentQrView.as_view(), name="public-agent-qr"),
+    path("public/agents/<slug:network_handle>/chat/", PublicAgentGuestChatView.as_view(), name="public-agent-guest-chat"),
     path("agents/handle/<slug:network_handle>/", PublicAgentHandleView.as_view(), name="agent-handle"),
     path("agents/verify/<uuid:agent_id>/", PublicAgentVerificationView.as_view(), name="agent-verification"),
     path("agents/verify/<uuid:agent_id>/trust/", PublicTrustHistoryView.as_view(), name="agent-trust-history"),

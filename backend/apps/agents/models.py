@@ -387,6 +387,7 @@ class AgentKnowledgeSource(models.Model):
     content_ciphertext = models.TextField()
     source_url = models.URLField(blank=True)
     active = models.BooleanField(default=True)
+    published = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -404,6 +405,7 @@ class AgentCatalogItem(models.Model):
     currency = models.CharField(max_length=8, default="NGN")
     availability = models.CharField(max_length=80, default="Available")
     active = models.BooleanField(default=True)
+    published = models.BooleanField(default=False)
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -466,6 +468,45 @@ class AgentAuditEvent(models.Model):
     action = models.CharField(max_length=80)
     detail = models.CharField(max_length=240, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class PublicAgentProfile(models.Model):
+    class Visibility(models.TextChoices):
+        PRIVATE = "private", "Private"
+        UNLISTED = "unlisted", "Unlisted"
+        PUBLIC = "public", "Public"
+
+    agent = models.OneToOneField(Agent, on_delete=models.CASCADE, related_name="public_profile")
+    visibility = models.CharField(max_length=16, choices=Visibility.choices, default=Visibility.PRIVATE)
+    tagline = models.CharField(max_length=160, blank=True)
+    public_description = models.TextField(blank=True)
+    logo_url = models.URLField(blank=True)
+    cover_url = models.URLField(blank=True)
+    website_url = models.URLField(blank=True)
+    social_links = models.JSONField(default=list, blank=True)
+    published_capabilities = models.JSONField(default=list, blank=True)
+    languages = models.JSONField(default=list, blank=True)
+    public_location = models.CharField(max_length=120, blank=True)
+    public_chat_enabled = models.BooleanField(default=False)
+    guest_daily_limit = models.PositiveSmallIntegerField(default=20)
+    show_catalog = models.BooleanField(default=True)
+    show_trust_history = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class GuestAgentMessage(models.Model):
+    message_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="guest_messages")
+    session_id = models.UUIDField(default=uuid.uuid4, db_index=True)
+    ip_hash = models.CharField(max_length=64, db_index=True)
+    prompt_ciphertext = models.TextField()
+    response_ciphertext = models.TextField()
+    matched_sources = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

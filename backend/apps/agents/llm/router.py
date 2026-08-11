@@ -31,6 +31,20 @@ class ModelRouter:
             logger.warning("Model analysis unavailable; using deterministic fallback: %s", exc)
             return None
 
+    def generate_business_reply(self, request_text: str, identity: dict, context: list[dict]) -> str | None:
+        if not self.gateway:
+            return None
+        try:
+            return self.gateway.generate_business_reply(
+                request_text,
+                settings.AGENT_DEFAULT_MODEL,
+                identity,
+                context,
+            )
+        except ModelGatewayError as exc:
+            logger.warning("Business chat model unavailable; using grounded fallback: %s", exc)
+            return None
+
 
 def get_model_router() -> ModelRouter:
     if settings.AGENT_LLM_PROVIDER == "openai" and settings.OPENAI_API_KEY:

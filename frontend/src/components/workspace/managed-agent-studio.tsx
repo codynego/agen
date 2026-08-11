@@ -6,6 +6,7 @@ import { Icon } from "@/components/workspace/icons";
 import {
   ApiError,
   ManagedAgentSetup,
+  PublicProfileSettings,
   activateManagedAgent,
   addManagedCatalogItem,
   addManagedKnowledge,
@@ -15,12 +16,14 @@ import {
   deleteManagedKnowledge,
   disconnectManagedTool,
   getManagedAgentSetup,
+  getPublicProfileSettings,
   submitManagedVerification,
   testManagedAgent,
   updateManagedAgent,
+  updatePublicProfileSettings,
 } from "@/lib/client-api";
 
-type SetupTab = "overview" | "verification" | "knowledge" | "catalog" | "tools" | "behavior" | "sandbox";
+type SetupTab = "overview" | "verification" | "knowledge" | "catalog" | "tools" | "behavior" | "sandbox" | "publishing";
 
 const setupTabs: Array<{ id: SetupTab; label: string; icon: string }> = [
   { id: "overview", label: "Overview", icon: "home" },
@@ -30,6 +33,7 @@ const setupTabs: Array<{ id: SetupTab; label: string; icon: string }> = [
   { id: "tools", label: "Tools", icon: "link" },
   { id: "behavior", label: "Behavior", icon: "settings" },
   { id: "sandbox", label: "Test agent", icon: "spark" },
+  { id: "publishing", label: "Public profile", icon: "link" },
 ];
 
 const readinessLabels: Record<string, string> = {
@@ -95,6 +99,7 @@ export function ManagedAgentStudio({ agentId, onBack }: { agentId: string; onBac
           {tab === "tools" ? <Tools setup={setup} busy={busy} onConnect={(input) => run(() => connectManagedTool(agentId, input))} onDelete={(id) => run(() => disconnectManagedTool(agentId, id))} /> : null}
           {tab === "behavior" ? <Behavior setup={setup} busy={busy} onSave={(input) => run(() => updateManagedAgent(agentId, input))} onTemplate={(key) => run(() => applyManagedTemplate(agentId, key))} /> : null}
           {tab === "sandbox" ? <Sandbox setup={setup} busy={busy} onTest={(prompt) => run(() => testManagedAgent(agentId, prompt))} /> : null}
+          {tab === "publishing" ? <Publishing agentId={agentId} setup={setup} /> : null}
         </main>
       </div>
     </section>
@@ -160,4 +165,61 @@ function Behavior({ setup, busy, onSave, onTemplate }: { setup: ManagedAgentSetu
 function Sandbox({ setup, busy, onTest }: { setup: ManagedAgentSetup; busy: boolean; onTest: (prompt: string) => void }) {
   const latest = setup.tests[0]; function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); onTest(String(new FormData(event.currentTarget).get("prompt") || "")); }
   return <><PanelHead kicker="Safe preview" title="Test against this agent's own data" copy="The sandbox retrieves only this business agent's knowledge and catalogue. It does not execute external actions." /><form className="sandbox-composer" onSubmit={submit}><textarea name="prompt" required rows={3} placeholder="Ask a realistic customer question..." /><button type="submit" disabled={busy}>{busy ? "Testing..." : "Run sandbox test"}</button></form>{latest ? <article className={`sandbox-result is-${latest.status}`}><header><span><Icon name="spark" /></span><div><strong>{latest.status.replace("_", " ")}</strong><small>{latest.matched_sources.length ? `Sources: ${latest.matched_sources.join(", ")}` : "No matching sources"}</small></div></header><p>{latest.response}</p></article> : <div className="managed-empty"><Icon name="spark" /><p>No tests yet. Ask a question your customers are likely to send.</p></div>}</>;
+}
+
+function Publishing({ agentId, setup }: { agentId: string; setup: ManagedAgentSetup }) {
+  const [profile, setProfile] = useState<PublicProfileSettings | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => { getPublicProfileSettings(agentId).then(setProfile).catch((caught) => setError((caught as ApiError).message)); }, [agentId]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!profile) return;
+    setSaving(true); setError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      const updated = await updatePublicProfileSettings(agentId, {
+        visibility: String(form.get("visibility")),
+        tagline: String(form.get("tagline")),
+        public_description: String(form.get("description")),
+        logo_url: String(form.get("logo_url")),
+        cover_url: String(form.get("cover_url")),
+        website_url: String(form.get("website_url")),
+        public_location: String(form.get("location")),
+        languages: String(form.get("languages")).split(",").map((value) => value.trim()).filter(Boolean),
+        published_capabilities: setup.agent.capabilities.filter((capability) => form.getAll("capability").includes(capability)),
+        social_links: String(form.get("social_links")).split("\n").map((line) => line.trim()).filter(Boolean).map((line) => { const [label, url] = line.split("|").map((value) => value.trim()); return { label: label || "Link", url }; }),
+        public_chat_enabled: form.get("public_chat_enabled") === "on",
+        show_catalog: form.get("show_catalog") === "on",
+        show_trust_history: form.get("show_trust_history") === "on",
+        guest_daily_limit: Number(form.get("guest_daily_limit") || 20),
+        published_source_ids: form.getAll("knowledge").map(String),
+        published_item_ids: form.getAll("catalog_item").map(String),
+      });
+      setProfile(updated);
+    } catch (caught) { setError((caught as ApiError).message); }
+    finally { setSaving(false); }
+  }
+
+  if (!profile) return <div className="managed-empty"><Icon name="link" /><p>{error || "Loading public profile settings..."}</p></div>;
+  return <><PanelHead kicker="Publishing" title="Give this agent a public home" copy="Choose exactly what visitors and external agents can see. Private instructions, secrets, and audit logs are never published." />
+    <div className="public-profile-status"><div><span>Canonical profile</span><strong>{profile.canonical_url}</strong></div>{profile.publishable && profile.visibility !== "private" ? <a href={profile.canonical_url} target="_blank" rel="noreferrer">Preview profile <Icon name="chevron" /></a> : <span>Not live yet</span>}</div>
+    {profile.publish_blockers.length ? <div className="managed-error">{profile.publish_blockers.join(" ")}</div> : null}
+    {error ? <div className="managed-error">{error}</div> : null}
+    <form className="managed-form managed-form--grid" onSubmit={submit}>
+      <label><span>Visibility</span><select name="visibility" defaultValue={profile.publishable ? profile.visibility : "private"}><option value="private">Private</option><option value="unlisted" disabled={!profile.publishable}>Unlisted link</option><option value="public" disabled={!profile.publishable}>Public and discoverable</option></select><small>{profile.publishable ? "Publishing is available." : "Resolve the publishing requirements above first."}</small></label>
+      <label><span>Public location</span><input name="location" defaultValue={profile.public_location} placeholder="Lagos, Nigeria" /></label>
+      <label className="is-wide"><span>Tagline</span><input name="tagline" maxLength={160} defaultValue={profile.tagline} placeholder="Trusted support for every order" /></label>
+      <label className="is-wide"><span>Public description</span><textarea name="description" rows={4} defaultValue={profile.public_description} placeholder="Explain what this agent can help visitors accomplish." /></label>
+      <label><span>Logo URL</span><input name="logo_url" type="url" defaultValue={profile.logo_url} placeholder="https://..." /></label><label><span>Cover image URL</span><input name="cover_url" type="url" defaultValue={profile.cover_url} placeholder="https://..." /></label>
+      <label><span>Business website</span><input name="website_url" type="url" defaultValue={profile.website_url} placeholder="https://..." /></label><label><span>Languages</span><input name="languages" defaultValue={profile.languages.join(", ")} placeholder="English, Yoruba" /></label>
+      <label className="is-wide"><span>Social links</span><textarea name="social_links" rows={3} defaultValue={profile.social_links.map((link) => `${link.label} | ${link.url}`).join("\n")} placeholder={"Instagram | https://instagram.com/business\nLinkedIn | https://linkedin.com/company/business"} /><small>One per line: Label | HTTPS URL</small></label>
+      <fieldset className="publishing-options is-wide"><legend>Published capabilities</legend>{setup.agent.capabilities.map((capability) => <label key={capability}><input type="checkbox" name="capability" value={capability} defaultChecked={profile.published_capabilities.includes(capability)} /><span>{capability.replaceAll("_", " ")}</span></label>)}</fieldset>
+      <fieldset className="publishing-options is-wide"><legend>Published knowledge</legend>{setup.knowledge.length ? setup.knowledge.map((source) => <label key={source.source_id}><input type="checkbox" name="knowledge" value={source.source_id} defaultChecked={profile.published_source_ids.includes(source.source_id)} /><span>{source.title}</span></label>) : <p>Add knowledge before publishing it.</p>}</fieldset>
+      <fieldset className="publishing-options is-wide"><legend>Published catalogue</legend>{setup.catalog.length ? setup.catalog.map((item) => <label key={item.item_id}><input type="checkbox" name="catalog_item" value={item.item_id} defaultChecked={profile.published_item_ids.includes(item.item_id)} /><span>{item.name}</span></label>) : <p>Add catalogue items before publishing them.</p>}</fieldset>
+      <div className="publishing-switches is-wide"><label><input type="checkbox" name="public_chat_enabled" defaultChecked={profile.public_chat_enabled} /><span><strong>Guest chat</strong><small>Visitors can ask about published information.</small></span></label><label><input type="checkbox" name="show_catalog" defaultChecked={profile.show_catalog} /><span><strong>Show catalogue</strong><small>Display selected products and services.</small></span></label><label><input type="checkbox" name="show_trust_history" defaultChecked={profile.show_trust_history} /><span><strong>Show trust</strong><small>Display verification and network performance.</small></span></label></div>
+      <label><span>Guest messages per day</span><input name="guest_daily_limit" type="number" min={1} max={500} defaultValue={profile.guest_daily_limit} /></label>
+      <button type="submit" disabled={saving}>{saving ? "Publishing..." : "Save public profile"}</button>
+    </form></>;
 }

@@ -59,6 +59,28 @@ class OpenAIModelGatewayTests(SimpleTestCase):
         self.assertIn('"network_handle": "agen-123456789abc"', payload["instructions"])
         self.assertEqual(mocked_urlopen.call_args.kwargs["timeout"], 7)
 
+    @patch("apps.agents.llm.openai_gateway.urlopen")
+    def test_business_chat_uses_only_supplied_identity_and_context(self, mocked_urlopen):
+        response = Mock()
+        response.read.return_value = json.dumps({
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "You can return it within seven days."}]}]
+        }).encode("utf-8")
+        mocked_urlopen.return_value.__enter__.return_value = response
+        gateway = OpenAIModelGateway("test-key", "https://api.openai.test/v1")
+
+        result = gateway.generate_business_reply(
+            "Can I return this?",
+            "gpt-5-mini",
+            {"name": "Acme Guide", "company_name": "Acme Ltd"},
+            [{"title": "Returns", "content": "Unused items may be returned within seven days."}],
+        )
+
+        self.assertEqual(result, "You can return it within seven days.")
+        payload = json.loads(mocked_urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertFalse(payload["store"])
+        self.assertIn("Acme Guide", payload["instructions"])
+        self.assertIn("Unused items", payload["instructions"])
+
     @override_settings(AGENT_DEFAULT_MODEL="gpt-5-mini", AGENT_REASONING_MODEL="gpt-5.1")
     def test_complex_requests_escalate_to_reasoning_model(self):
         gateway = Mock()

@@ -80,6 +80,37 @@ export type ManagedAgentSetup = {
   readiness: { ready: boolean; checks: Record<string, boolean>; required_verification_level: "basic" | "business" | "enhanced"; current_verification_level: "none" | "basic" | "business" | "enhanced" };
 };
 
+export type PublicProfileSettings = {
+  visibility: "private" | "unlisted" | "public";
+  tagline: string;
+  public_description: string;
+  logo_url: string;
+  cover_url: string;
+  website_url: string;
+  social_links: Array<{ label: string; url: string }>;
+  published_capabilities: string[];
+  languages: string[];
+  public_location: string;
+  public_chat_enabled: boolean;
+  guest_daily_limit: number;
+  show_catalog: boolean;
+  show_trust_history: boolean;
+  canonical_url: string;
+  publishable: boolean;
+  publish_blockers: string[];
+  published_source_ids: string[];
+  published_item_ids: string[];
+};
+
+export type PublicBusinessAgent = {
+  agent_id: string; network_handle: string; name: string; company_name: string; category: string;
+  tagline: string; description: string; logo_url: string; cover_url: string; website_url: string;
+  social_links: Array<{ label: string; url: string }>; capabilities: string[]; languages: string[];
+  location: string; online: boolean; trust_score: string; trust_level: string; verification_level: string;
+  identity_verified_at: string | null; completed_tasks: number; public_chat_enabled: boolean;
+  catalog: ManagedAgentSetup["catalog"]; canonical_url: string;
+};
+
 export type ResolverCandidate = {
   rank: number;
   match_score: string;
@@ -263,6 +294,25 @@ export function testManagedAgent(agentId: string, prompt: string) {
 
 export function activateManagedAgent(agentId: string) {
   return apiRequest<ManagedAgentSetup>(`/api/agents/business/${agentId}/activate/`, { method: "POST", body: "{}" });
+}
+
+export function getPublicProfileSettings(agentId: string) {
+  return apiRequest<PublicProfileSettings>(`/api/agents/business/${agentId}/public-profile/`);
+}
+
+export function updatePublicProfileSettings(agentId: string, input: Record<string, unknown>) {
+  return apiRequest<PublicProfileSettings>(`/api/agents/business/${agentId}/public-profile/`, { method: "PATCH", body: JSON.stringify(input) });
+}
+
+export function sendPublicAgentMessage(networkHandle: string, message: string, sessionId?: string) {
+  return fetch(`${API_BASE_URL}/api/public/agents/${networkHandle}/chat/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, session_id: sessionId }),
+  }).then(async (response) => {
+    if (!response.ok) throw await readError(response);
+    return response.json() as Promise<{ message_id: string; session_id: string; response: string; matched_sources: string[] }>;
+  });
 }
 
 export function discoverAgents(request_text: string) {

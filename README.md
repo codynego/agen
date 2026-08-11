@@ -36,13 +36,16 @@ The web application runs at `http://localhost:3000`.
 
 Use the same hostname for both applications. For example, do not mix `localhost` and `127.0.0.1`, because browser session cookies are hostname-specific.
 
-## Authentication Flow
+## Passwordless Authentication Flow
 
 1. The frontend requests a CSRF token from Django.
-2. Signup creates the user, an authenticated session, and one personal agent atomically.
-3. Django stores the session identifier in an HttpOnly cookie.
-4. The protected workspace checks `/api/auth/me/` before rendering.
-5. Business agents created in Agent Studio are owned by the authenticated user and persisted in Django.
+2. The user enters an email address and Django sends a single-use six-digit code.
+3. Successful verification creates the account and personal agent when needed.
+4. Django stores the session identifier in an HttpOnly cookie.
+5. The protected workspace checks `/api/auth/me/` before rendering.
+6. Business agents created in Agent Studio are owned by the authenticated user and persisted in Django.
+
+During local development, the default console email backend prints the code in the Django terminal. For a predictable local code, set `AUTH_DEV_LOGIN_CODE=123456` in `backend/.env`. This setting is ignored whenever `DJANGO_DEBUG=false`. Configure a production email backend before deployment.
 
 ## Verification
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 import uuid
 
-from django.db.models import Count, Q, Sum
+from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
 
 from .models import Agent, AgentActivity, TrustEvent
@@ -103,23 +103,24 @@ def apply_agent_filters(queryset, params):
     return queryset
 
 
-def build_dashboard_snapshot() -> dict:
-    agents = Agent.objects.all()
+def build_dashboard_snapshot(user) -> dict:
+    agents = Agent.objects.filter(owner=user)
     personal_agent = agents.filter(kind=Agent.Kind.PERSONAL, status=Agent.Status.ACTIVE).first() or agents.filter(kind=Agent.Kind.PERSONAL).first()
     featured_agents = agents.filter(kind=Agent.Kind.BUSINESS, verified=True)[:4]
     recent_activity = list(
-        AgentActivity.objects.select_related("agent")
+        AgentActivity.objects.filter(agent__owner=user)
+        .select_related("agent")
         .order_by("-created_at")[:5]
         .values("title", "detail", "created_at", "agent__name", "agent__slug")
     )
 
     return {
-        "greeting": "Good afternoon, Abednego",
+        "greeting": f"Good afternoon, {user.get_full_name().strip() or user.get_username()}",
         "metrics": {
             "my_agents": agents.filter(kind=Agent.Kind.PERSONAL).count(),
             "connected_agents": agents.filter(kind=Agent.Kind.BUSINESS).count(),
-            "network_requests": AgentActivity.objects.count() * 14 + 2841 if agents.exists() else 2841,
-            "successful_transactions": AgentActivity.objects.aggregate(total=Count("id"))["total"] * 8 + 1204 if AgentActivity.objects.exists() else 1204,
+            "network_requests": AgentActivity.objects.filter(agent__owner=user).count(),
+            "successful_transactions": AgentActivity.objects.filter(agent__owner=user).count(),
         },
         "personal_agent": personal_agent,
         "featured_agents": featured_agents,

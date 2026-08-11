@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
 
 import { Icon } from "@/components/workspace/icons";
-import { ApiError, AuthSession, createBusinessAgent, getAuthSession, logoutAccount } from "@/lib/client-api";
+import { SettingsView } from "@/components/workspace/settings-view";
+import { AgentConnection, ApiError, AuthSession, ResolverCandidate, approveAgentConnection, createBusinessAgent, discoverAgents, getAuthSession, logoutAccount, requestAgentConnection } from "@/lib/client-api";
 
 type WorkspaceTab = "agent" | "tasks" | "studio" | "activity" | "settings";
 
@@ -38,13 +39,23 @@ export function AgentWorkspace() {
   const [autoConnect, setAutoConnect] = useState(false);
   const [listening, setListening] = useState(false);
   const [approved, setApproved] = useState(false);
+  const [candidate, setCandidate] = useState<ResolverCandidate | null>(null);
+  const [connection, setConnection] = useState<AgentConnection | null>(null);
+  const [resolving, setResolving] = useState(false);
+  const [resolverError, setResolverError] = useState("");
   const hasTask = Boolean(request);
 
   useEffect(() => {
     let active = true;
     getAuthSession()
       .then((authSession) => {
-        if (active) setSession(authSession);
+        if (!active) return;
+        if (!authSession.onboarding_completed) {
+          router.replace("/onboarding");
+          return;
+        }
+        setAutoConnect(authSession.approval_mode === "auto_connect");
+        setSession(authSession);
       })
       .catch(() => {
         if (active) router.replace("/auth");
@@ -67,13 +78,43 @@ export function AgentWorkspace() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
     const cleanMessage = message.trim();
     if (!cleanMessage) return;
     setRequest(cleanMessage);
     setMessage("");
-    setApproved(autoConnect);
+    setApproved(false);
+    setCandidate(null);
+    setConnection(null);
+    setResolverError("");
+    setResolving(true);
+    try {
+      const task = await discoverAgents(cleanMessage);
+      const topCandidate = task.candidates[0] || null;
+      setCandidate(topCandidate);
+      if (topCandidate) {
+        const nextConnection = await requestAgentConnection(task.task_id, topCandidate.network_handle, ["task_context"]);
+        setConnection(nextConnection);
+        setApproved(nextConnection.status === "approved" || nextConnection.status === "active");
+      }
+    } catch (caught) {
+      setResolverError((caught as ApiError).message);
+    } finally {
+      setResolving(false);
+    }
+  }
+
+  async function approveConnection() {
+    if (!connection) return;
+    setResolverError("");
+    try {
+      const updated = await approveAgentConnection(connection.connection_id, connection.requested_scopes);
+      setConnection(updated);
+      setApproved(updated.status === "approved" || updated.status === "active");
+    } catch (caught) {
+      setResolverError((caught as ApiError).message);
+    }
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -124,7 +165,10 @@ export function AgentWorkspace() {
             listening={listening}
             message={message}
             request={request}
-            onApprove={() => setApproved(true)}
+            candidate={candidate}
+            resolving={resolving}
+            resolverError={resolverError}
+            onApprove={approveConnection}
             onChoosePrompt={setMessage}
             onMessageChange={setMessage}
             onSubmit={submit}
@@ -133,10 +177,10 @@ export function AgentWorkspace() {
             onViewTasks={() => selectTab("tasks")}
           />
         ) : null}
-        {activeTab === "tasks" ? <TasksView approved={approved} hasTask={hasTask} request={request} onApprove={() => setApproved(true)} onAskAgent={() => selectTab("agent")} /> : null}
+        {activeTab === "tasks" ? <TasksView approved={approved} candidate={candidate} hasTask={hasTask} request={request} resolving={resolving} onApprove={approveConnection} onAskAgent={() => selectTab("agent")} /> : null}
         {activeTab === "studio" ? <BusinessAgentsView /> : null}
         {activeTab === "activity" ? <ActivityView hasTask={hasTask} /> : null}
-        {activeTab === "settings" ? <SettingsView autoConnect={autoConnect} email={session.user.email} onSignOut={signOut} onToggleAutoConnect={() => setAutoConnect((value) => !value)} /> : null}
+        {activeTab === "settings" ? <SettingsView agent={session.personal_agent} autoConnect={autoConnect} email={session.user.email} onSignOut={signOut} onToggleAutoConnect={() => setAutoConnect((value) => !value)} /> : null}
       </main>
 
       <nav className="dashboard-mobile-nav" aria-label="Dashboard navigation">
@@ -149,10 +193,13 @@ export function AgentWorkspace() {
 function AgentView(props: {
   approved: boolean;
   autoConnect: boolean;
+  candidate: ResolverCandidate | null;
   hasTask: boolean;
   listening: boolean;
   message: string;
   request: string;
+  resolving: boolean;
+  resolverError: string;
   onApprove: () => void;
   onChoosePrompt: (prompt: string) => void;
   onMessageChange: (message: string) => void;
@@ -174,8 +221,8 @@ function AgentView(props: {
             <div className="chat-thread">
               <div className="chat-time">Just now</div>
               <div className="chat-bubble chat-bubble--user">{props.request}</div>
-              <div className="chat-agent-row"><span className="chat-agent-icon"><Icon name="spark" /></span><div className="chat-bubble chat-bubble--agent">I understand. I found a trusted specialist that can complete this request. {props.approved ? "The connection is secure and I am working on it now." : "I need your approval before I connect."}</div></div>
-              <ConnectionCard approved={props.approved} onApprove={props.onApprove} />
+              <div className="chat-agent-row"><span className="chat-agent-icon"><Icon name="spark" /></span><div className="chat-bubble chat-bubble--agent">{props.resolving ? "I understand. I am checking the Agen Resolver for a verified specialist." : props.resolverError ? `I could not complete discovery: ${props.resolverError}` : props.candidate ? `I found ${props.candidate.name}. ${props.approved ? "The scoped connection is approved and ready." : "I need your approval before I connect."}` : "I could not find a verified agent with the required capabilities yet."}</div></div>
+              {props.candidate ? <ConnectionCard approved={props.approved} candidate={props.candidate} onApprove={props.onApprove} /> : null}
             </div>
           ) : (
             <div className="agent-welcome">
@@ -240,16 +287,12 @@ function VoiceListeningView({ onCancel, onFinish }: { onCancel: () => void; onFi
   );
 }
 
-function TasksView({ approved, hasTask, request, onApprove, onAskAgent }: { approved: boolean; hasTask: boolean; request: string; onApprove: () => void; onAskAgent: () => void }) {
-  return <section className="tab-view"><div className="view-summary"><article><span>Active</span><strong>{hasTask ? "1" : "0"}</strong><small>Task being handled</small></article><article><span>Completed</span><strong>12</strong><small>This month</small></article><article><span>Time saved</span><strong>8.4h</strong><small>This month</small></article></div><div className="view-panel"><div className="view-panel__head"><div><span className="view-kicker">Active work</span><h2>Tasks in progress</h2></div><button type="button" onClick={onAskAgent}>New request</button></div>{hasTask ? <div className="task-detail"><div className="task-detail__top"><span className="task-symbol"><Icon name="spark" /></span><div><h3>{request}</h3><p>Started just now</p></div><b>{approved ? "Working" : "Needs approval"}</b></div><div className="task-detail__progress"><span className="is-done">Request understood</span><span className="is-done">Specialist found</span><span className={approved ? "is-done" : ""}>Secure connection</span><span>Result delivered</span></div>{approved ? <p className="task-note">Agen is coordinating the request. The result will be delivered in your conversation.</p> : <ConnectionCard approved={false} onApprove={onApprove} />}</div> : <EmptyView icon="tasks" title="No active tasks" copy="Ask Agen to handle something and track every step here." action="Ask Agen" onAction={onAskAgent} />}</div></section>;
+function TasksView({ approved, candidate, hasTask, request, resolving, onApprove, onAskAgent }: { approved: boolean; candidate: ResolverCandidate | null; hasTask: boolean; request: string; resolving: boolean; onApprove: () => void; onAskAgent: () => void }) {
+  return <section className="tab-view"><div className="view-summary"><article><span>Active</span><strong>{hasTask ? "1" : "0"}</strong><small>Task being handled</small></article><article><span>Completed</span><strong>12</strong><small>This month</small></article><article><span>Time saved</span><strong>8.4h</strong><small>This month</small></article></div><div className="view-panel"><div className="view-panel__head"><div><span className="view-kicker">Active work</span><h2>Tasks in progress</h2></div><button type="button" onClick={onAskAgent}>New request</button></div>{hasTask ? <div className="task-detail"><div className="task-detail__top"><span className="task-symbol"><Icon name="spark" /></span><div><h3>{request}</h3><p>Started just now</p></div><b>{resolving ? "Discovering" : approved ? "Working" : candidate ? "Needs approval" : "No match"}</b></div><div className="task-detail__progress"><span className="is-done">Request understood</span><span className={candidate ? "is-done" : ""}>Specialist found</span><span className={approved ? "is-done" : ""}>Secure connection</span><span>Result delivered</span></div>{approved ? <p className="task-note">Agen established a scoped connection. The provider can now work on the approved task context.</p> : candidate ? <ConnectionCard approved={false} candidate={candidate} onApprove={onApprove} /> : <p className="task-note">{resolving ? "The resolver is checking verified capabilities and availability." : "No verified provider currently matches this task."}</p>}</div> : <EmptyView icon="tasks" title="No active tasks" copy="Ask Agen to handle something and track every step here." action="Ask Agen" onAction={onAskAgent} />}</div></section>;
 }
 
 function ActivityView({ hasTask }: { hasTask: boolean }) {
   return <section className="tab-view"><div className="view-panel"><div className="view-panel__head"><div><span className="view-kicker">Audit trail</span><h2>Recent activity</h2></div><button type="button">Export</button></div><div className="activity-feed">{hasTask ? <ActivityItem icon="spark" title="New request received" detail="Agen understood your goal and created a task plan." time="Just now" /> : null}<ActivityItem icon="shield" title="Privacy check completed" detail="Connection permissions and sharing preferences are up to date." time="Today, 9:30" /><ActivityItem icon="tasks" title="Restaurant booking completed" detail="Agen reserved a table for two and added it to your schedule." time="Yesterday" /><ActivityItem icon="activity" title="Weekly summary prepared" detail="You saved an estimated 2.1 hours across four completed tasks." time="Mon, 8:00" /></div></div></section>;
-}
-
-function SettingsView({ autoConnect, email, onSignOut, onToggleAutoConnect }: { autoConnect: boolean; email: string; onSignOut: () => void; onToggleAutoConnect: () => void }) {
-  return <section className="tab-view settings-grid"><div className="view-panel"><span className="view-kicker">Connections</span><h2>How Agen works with others</h2><div className="setting-row"><div><strong>Auto-connect</strong><p>Allow Agen to connect with verified agents without asking each time.</p></div><button type="button" className="toggle" aria-label="Toggle auto-connect" aria-pressed={autoConnect} onClick={onToggleAutoConnect} /></div><div className="setting-row"><div><strong>Minimum trust score</strong><p>Only connect with agents that meet your trust threshold.</p></div><button type="button" className="setting-value">95% <Icon name="chevron" /></button></div></div><div className="view-panel"><span className="view-kicker">Account and privacy</span><h2>{email}</h2><div className="setting-row"><div><strong>Task-only sharing</strong><p>Share only the minimum information required for a task.</p></div><span className="setting-status">On</span></div><div className="setting-row"><div><strong>Sign out</strong><p>End this session on the current device.</p></div><button type="button" className="setting-value setting-value--danger" onClick={onSignOut}>Sign out <Icon name="chevron" /></button></div></div></section>;
 }
 
 function BusinessAgentsView() {
@@ -334,8 +377,8 @@ function TabButton({ tab, active, onSelect, compact = false }: { tab: (typeof ta
   return <button type="button" className={`${compact ? "mobile-tab" : "dashboard-nav__item"}${active ? " is-active" : ""}`} onClick={() => onSelect(tab.id)} aria-current={active ? "page" : undefined}><Icon name={tab.icon} /><span>{compact ? compactLabel : tab.label}</span></button>;
 }
 
-function ConnectionCard({ approved, onApprove }: { approved: boolean; onApprove: () => void }) {
-  return <div className="connect-card"><div><span className="connect-logo">A+</span><p><strong>Verified service agent</strong><small><Icon name="shield" />98% trust score</small></p><b>Available</b></div><p>Shares only the details needed for this request.</p><button type="button" onClick={onApprove} disabled={approved}>{approved ? "Connected securely" : "Approve connection"}<Icon name={approved ? "shield" : "chevron"} /></button></div>;
+function ConnectionCard({ approved, candidate, onApprove }: { approved: boolean; candidate: ResolverCandidate; onApprove: () => void }) {
+  return <div className="connect-card"><div><span className="connect-logo">A+</span><p><strong>{candidate.name}</strong><small><Icon name="shield" />{candidate.trust_score}% network trust · @{candidate.network_handle}</small></p><b>Rank #{candidate.rank}</b></div><p>{candidate.reasons[0]}. Only approved task context will be shared.</p><button type="button" onClick={onApprove} disabled={approved}>{approved ? "Connected securely" : "Approve scoped connection"}<Icon name={approved ? "shield" : "chevron"} /></button></div>;
 }
 
 function ActivityItem({ icon, title, detail, time }: { icon: string; title: string; detail: string; time: string }) {

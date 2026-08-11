@@ -17,6 +17,7 @@ class AgentSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "agent_id",
+            "network_handle",
             "name",
             "slug",
             "kind",
@@ -42,6 +43,7 @@ class AgentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "agent_id",
+            "network_handle",
             "slug",
             "trust_score",
             "trust_level",
@@ -82,19 +84,19 @@ class BusinessAgentRegistrationSerializer(serializers.Serializer):
 class PublicAgentVerificationSerializer(serializers.ModelSerializer):
     trust_event_count = serializers.IntegerField(read_only=True)
     verification_url = serializers.SerializerMethodField()
+    handle_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Agent
         fields = [
             "agent_id",
+            "network_handle",
             "name",
             "kind",
             "hosting_type",
             "status",
             "summary",
-            "endpoint",
             "capabilities",
-            "allowed_actions",
             "trust_score",
             "trust_level",
             "verified",
@@ -102,6 +104,7 @@ class PublicAgentVerificationSerializer(serializers.ModelSerializer):
             "identity_verified_at",
             "trust_event_count",
             "verification_url",
+            "handle_url",
             "created_at",
             "updated_at",
         ]
@@ -109,6 +112,11 @@ class PublicAgentVerificationSerializer(serializers.ModelSerializer):
     def get_verification_url(self, obj):
         request = self.context.get("request")
         path = f"/api/agents/verify/{obj.agent_id}/"
+        return request.build_absolute_uri(path) if request else path
+
+    def get_handle_url(self, obj):
+        request = self.context.get("request")
+        path = f"/api/agents/handle/{obj.network_handle}/"
         return request.build_absolute_uri(path) if request else path
 
 

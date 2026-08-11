@@ -20,24 +20,30 @@ from .services import apply_agent_filters, build_dashboard_snapshot, provision_p
 
 
 class DashboardView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        snapshot = build_dashboard_snapshot()
+        snapshot = build_dashboard_snapshot(request.user)
         serializer = DashboardSerializer(snapshot)
         return Response(serializer.data)
 
 
 class AgentListView(ListAPIView):
+    permission_classes = [IsAuthenticated]
     serializer_class = AgentSerializer
 
     def get_queryset(self):
-        queryset = Agent.objects.select_related("owner").prefetch_related("activities")
+        queryset = Agent.objects.filter(owner=self.request.user).prefetch_related("activities")
         return apply_agent_filters(queryset, self.request.query_params)
 
 
 class AgentDetailView(RetrieveAPIView):
+    permission_classes = [IsAuthenticated]
     serializer_class = AgentSerializer
-    queryset = Agent.objects.select_related("owner").prefetch_related("activities")
     lookup_field = "slug"
+
+    def get_queryset(self):
+        return Agent.objects.filter(owner=self.request.user).prefetch_related("activities")
 
 
 class PersonalAgentProvisionView(APIView):
@@ -76,6 +82,11 @@ class PublicAgentVerificationView(RetrieveAPIView):
 
     def get_queryset(self):
         return Agent.objects.filter(status=Agent.Status.ACTIVE).annotate(trust_event_count=Count("trust_events"))
+
+
+class PublicAgentHandleView(PublicAgentVerificationView):
+    lookup_field = "network_handle"
+    lookup_url_kwarg = "network_handle"
 
 
 class PublicTrustHistoryView(ListAPIView):

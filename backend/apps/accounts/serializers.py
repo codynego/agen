@@ -1,5 +1,4 @@
 from django.contrib.auth import get_user_model
-from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
 
@@ -17,18 +16,14 @@ class UserSerializer(serializers.ModelSerializer):
         return obj.get_full_name().strip() or obj.email
 
 
-class RegisterSerializer(serializers.Serializer):
-    name = serializers.CharField(max_length=150)
+class RequestLoginCodeSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    password = serializers.CharField(write_only=True, min_length=8, validators=[validate_password])
+    name = serializers.CharField(max_length=150, required=False, allow_blank=True)
 
     def validate_email(self, value):
-        email = value.strip().lower()
-        if User.objects.filter(email__iexact=email).exists():
-            raise serializers.ValidationError("An account with this email already exists.")
-        return email
+        return value.strip().lower()
 
 
-class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField(write_only=True)
+class VerifyLoginCodeSerializer(serializers.Serializer):
+    challenge_id = serializers.UUIDField()
+    code = serializers.RegexField(r"^\d{6}$", error_messages={"invalid": "Enter the six-digit code."})

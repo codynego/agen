@@ -5,48 +5,71 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
 import { Icon } from "@/components/workspace/icons";
-import { ApiError, loginAccount, registerAccount } from "@/lib/client-api";
+import { ApiError, requestLoginCode, verifyLoginCode } from "@/lib/client-api";
 
-type AuthMode = "register" | "login";
+type AuthStep = "email" | "code";
+
+function errorMessage(caught: unknown) {
+  const apiError = caught as ApiError;
+  const fieldMessage = apiError.fields
+    ? Object.values(apiError.fields).flat().find((value) => typeof value === "string")
+    : undefined;
+  return fieldMessage || apiError.message;
+}
 
 export function AuthScreen() {
   const router = useRouter();
-  const [mode, setMode] = useState<AuthMode>("register");
+  const [step, setStep] = useState<AuthStep>("email");
+  const [email, setEmail] = useState("");
+  const [challengeId, setChallengeId] = useState("");
+  const [code, setCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  async function requestCode() {
+    const challenge = await requestLoginCode({ email });
+    setChallengeId(challenge.challenge_id);
+    setNotice("We sent a six-digit code. It expires in 10 minutes.");
+    setStep("code");
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
     setError("");
-    const form = new FormData(event.currentTarget);
     try {
-      if (mode === "register") {
-        await registerAccount({
-          name: String(form.get("name") || ""),
-          email: String(form.get("email") || ""),
-          password: String(form.get("password") || ""),
-        });
+      if (step === "email") {
+        await requestCode();
       } else {
-        await loginAccount({
-          email: String(form.get("email") || ""),
-          password: String(form.get("password") || ""),
-        });
+        const session = await verifyLoginCode({ challenge_id: challengeId, code });
+        router.replace(session.onboarding_completed ? "/app" : "/onboarding");
       }
-      router.replace("/app");
     } catch (caught) {
-      const apiError = caught as ApiError;
-      const fieldMessage = apiError.fields
-        ? Object.values(apiError.fields).flat().find((value) => typeof value === "string")
-        : undefined;
-      setError(fieldMessage || apiError.message);
+      setError(errorMessage(caught));
     } finally {
       setSubmitting(false);
     }
   }
 
-  function changeMode(nextMode: AuthMode) {
-    setMode(nextMode);
+  async function resendCode() {
+    setSubmitting(true);
+    setError("");
+    setCode("");
+    try {
+      await requestCode();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function changeEmail() {
+    setStep("email");
+    setChallengeId("");
+    setCode("");
+    setNotice("");
     setError("");
   }
 
@@ -60,18 +83,21 @@ export function AuthScreen() {
       <section className="auth-panel">
         <div className="auth-card">
           <div className="auth-mobile-brand"><Link className="dashboard-brand" href="/"><span><Icon name="spark" /></span><strong>agen</strong></Link></div>
-          <span className="view-kicker">{mode === "register" ? "Create your account" : "Welcome back"}</span>
-          <h2>{mode === "register" ? "Meet your Agen." : "Continue with Agen."}</h2>
-          <p>{mode === "register" ? "Your private personal agent is created automatically." : "Sign in to your personal agent and active tasks."}</p>
-          <div className="auth-switch" role="tablist" aria-label="Authentication method"><button type="button" role="tab" aria-selected={mode === "register"} className={mode === "register" ? "is-active" : ""} onClick={() => changeMode("register")}>Create account</button><button type="button" role="tab" aria-selected={mode === "login"} className={mode === "login" ? "is-active" : ""} onClick={() => changeMode("login")}>Sign in</button></div>
+          <span className="view-kicker">{step === "email" ? "Welcome to Agen" : "Check your email"}</span>
+          <h2>{step === "email" ? "Meet your agent." : "Enter your code."}</h2>
+          <p>{step === "email" ? "Enter your email to continue. New accounts get a personal agent automatically." : <>We sent a code to <strong>{email}</strong>.</>}</p>
           <form className="auth-form" onSubmit={submit}>
-            {mode === "register" ? <label><span>Full name</span><input name="name" autoComplete="name" required placeholder="Your name" /></label> : null}
-            <label><span>Email address</span><input name="email" type="email" autoComplete="email" required placeholder="you@company.com" /></label>
-            <label><span>Password</span><input name="password" type="password" autoComplete={mode === "register" ? "new-password" : "current-password"} minLength={8} required placeholder="At least 8 characters" /></label>
+            {step === "email" ? (
+              <label><span>Email address</span><input name="email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoFocus placeholder="you@example.com" /></label>
+            ) : (
+              <label><span>Six-digit code</span><input className="auth-code-input" name="code" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))} required autoFocus placeholder="000000" /></label>
+            )}
+            {notice && !error ? <div className="auth-notice" role="status">{notice}</div> : null}
             {error ? <div className="auth-error" role="alert">{error}</div> : null}
-            <button type="submit" disabled={submitting}>{submitting ? "Please wait..." : mode === "register" ? "Create my personal agent" : "Sign in"}<Icon name="chevron" /></button>
+            <button type="submit" disabled={submitting || (step === "code" && code.length !== 6)}>{submitting ? "Please wait..." : step === "email" ? "Continue" : "Verify and continue"}<Icon name="chevron" /></button>
           </form>
-          <div className="auth-security"><Icon name="shield" /><span>Your session is protected with secure cookies. We never store your password in the browser.</span></div>
+          {step === "code" ? <div className="auth-code-actions"><button type="button" onClick={changeEmail}>Use another email</button><button type="button" onClick={resendCode} disabled={submitting}>Send a new code</button></div> : null}
+          <div className="auth-security"><Icon name="shield" /><span>No password to remember. Your session is protected with a secure HttpOnly cookie.</span></div>
         </div>
       </section>
     </main>

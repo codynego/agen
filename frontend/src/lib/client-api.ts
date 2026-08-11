@@ -10,12 +10,32 @@ export type AuthUser = {
 
 export type AuthSession = {
   user: AuthUser;
+  onboarding_completed: boolean;
+  approval_mode: ApprovalMode;
   personal_agent: {
     agent_id: string;
+    network_handle: string;
     name: string;
     trust_score: string;
     trust_level: string;
   };
+};
+
+export type ApprovalMode = "always_ask" | "balanced" | "auto_connect";
+
+export type OnboardingInput = {
+  agent_name: string;
+  goals: string[];
+  approval_mode: ApprovalMode;
+  integrations: string[];
+};
+
+export type OnboardingStatus = OnboardingInput & {
+  onboarding_completed: boolean;
+  agent_id: string;
+  network_handle: string;
+  trust_score: string;
+  trust_level: string;
 };
 
 export type BusinessAgentInput = {
@@ -32,6 +52,40 @@ export type BusinessAgent = BusinessAgentInput & {
   agent_id: string;
   status: string;
   trust_score: string;
+};
+
+export type ResolverCandidate = {
+  rank: number;
+  match_score: string;
+  agent_id: string;
+  network_handle: string;
+  name: string;
+  category: string;
+  location: string;
+  capabilities: string[];
+  trust_score: string;
+  trust_level: string;
+  verified: boolean;
+  reasons: string[];
+};
+
+export type ResolverTask = {
+  task_id: string;
+  request_text: string;
+  discovery_spec: { capabilities: string[]; location?: string };
+  status: string;
+  risk_level: string;
+  candidates: ResolverCandidate[];
+};
+
+export type AgentConnection = {
+  connection_id: string;
+  task_id: string;
+  status: string;
+  auto_approved: boolean;
+  requested_scopes: string[];
+  provider: { agent_id: string; network_handle: string; name: string; capabilities: string[]; endpoint?: string };
+  data_grant: { grant_id: string; scopes: string[]; expires_at: string; active: boolean } | null;
 };
 
 export class ApiError extends Error {
@@ -69,12 +123,18 @@ async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T
   return response.json() as Promise<T>;
 }
 
-export function registerAccount(input: { name: string; email: string; password: string }) {
-  return apiRequest<AuthSession>("/api/auth/register/", { method: "POST", body: JSON.stringify(input) });
+export type LoginCodeChallenge = {
+  detail: string;
+  challenge_id: string;
+  expires_in_seconds: number;
+};
+
+export function requestLoginCode(input: { email: string; name?: string }) {
+  return apiRequest<LoginCodeChallenge>("/api/auth/request-code/", { method: "POST", body: JSON.stringify(input) });
 }
 
-export function loginAccount(input: { email: string; password: string }) {
-  return apiRequest<AuthSession>("/api/auth/login/", { method: "POST", body: JSON.stringify(input) });
+export function verifyLoginCode(input: { challenge_id: string; code: string }) {
+  return apiRequest<AuthSession>("/api/auth/verify-code/", { method: "POST", body: JSON.stringify(input) });
 }
 
 export function getAuthSession() {
@@ -85,6 +145,32 @@ export function logoutAccount() {
   return apiRequest<void>("/api/auth/logout/", { method: "POST", body: "{}" });
 }
 
+export function getOnboardingStatus() {
+  return apiRequest<OnboardingStatus>("/api/profile/onboarding/");
+}
+
+export function completeOnboarding(input: OnboardingInput) {
+  return apiRequest<OnboardingStatus>("/api/profile/onboarding/", { method: "POST", body: JSON.stringify(input) });
+}
+
 export function createBusinessAgent(input: BusinessAgentInput) {
   return apiRequest<BusinessAgent>("/api/agents/business/", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function discoverAgents(request_text: string) {
+  return apiRequest<ResolverTask>("/api/resolver/discover/", { method: "POST", body: JSON.stringify({ request_text }) });
+}
+
+export function requestAgentConnection(taskId: string, candidateHandle: string, scopes: string[]) {
+  return apiRequest<AgentConnection>(`/api/resolver/tasks/${taskId}/connect/`, {
+    method: "POST",
+    body: JSON.stringify({ candidate_handle: candidateHandle, scopes }),
+  });
+}
+
+export function approveAgentConnection(connectionId: string, scopes: string[]) {
+  return apiRequest<AgentConnection>(`/api/resolver/connections/${connectionId}/approve/`, {
+    method: "POST",
+    body: JSON.stringify({ scopes }),
+  });
 }

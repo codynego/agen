@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -100,7 +101,7 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.AllowAny",
+        "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
@@ -131,3 +132,14 @@ SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SECURE = not DEBUG
+
+EMAIL_BACKEND = env("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", "Agen <noreply@agen.local>")
+AUTH_CODE_TTL_MINUTES = int(env("AUTH_CODE_TTL_MINUTES", "10"))
+AUTH_CODE_MAX_ATTEMPTS = int(env("AUTH_CODE_MAX_ATTEMPTS", "5"))
+AUTH_CODE_RATE_WINDOW_MINUTES = int(env("AUTH_CODE_RATE_WINDOW_MINUTES", "15"))
+AUTH_CODE_EMAIL_LIMIT = int(env("AUTH_CODE_EMAIL_LIMIT", "5"))
+AUTH_CODE_IP_LIMIT = int(env("AUTH_CODE_IP_LIMIT", "20"))
+AUTH_DEV_LOGIN_CODE = env("AUTH_DEV_LOGIN_CODE", "").strip()
+if AUTH_DEV_LOGIN_CODE and (len(AUTH_DEV_LOGIN_CODE) != 6 or not AUTH_DEV_LOGIN_CODE.isdigit()):
+    raise ImproperlyConfigured("AUTH_DEV_LOGIN_CODE must be empty or exactly six digits.")

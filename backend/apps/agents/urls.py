@@ -20,6 +20,19 @@ from .resolver_views import (
     TaskListView,
 )
 from .conversation_views import ConversationDetailView, ConversationListCreateView, ConversationMessageView
+from .managed_views import (
+    ManagedAgentActivationView,
+    ManagedAgentCatalogDeleteView,
+    ManagedAgentCatalogView,
+    ManagedAgentKnowledgeDeleteView,
+    ManagedAgentKnowledgeView,
+    ManagedAgentSandboxView,
+    ManagedAgentSetupView,
+    ManagedAgentTemplateView,
+    ManagedAgentToolDeleteView,
+    ManagedAgentToolView,
+    ManagedAgentVerificationView,
+)
 
 urlpatterns = [
     path("dashboard/", DashboardView.as_view(), name="dashboard"),
@@ -36,6 +49,17 @@ urlpatterns = [
     path("agents/", AgentListView.as_view(), name="agent-list"),
     path("agents/personal/provision/", PersonalAgentProvisionView.as_view(), name="personal-agent-provision"),
     path("agents/business/", BusinessAgentView.as_view(), name="business-agent-list-create"),
+    path("agents/business/<uuid:agent_id>/setup/", ManagedAgentSetupView.as_view(), name="managed-agent-setup"),
+    path("agents/business/<uuid:agent_id>/template/<slug:template_key>/", ManagedAgentTemplateView.as_view(), name="managed-agent-template"),
+    path("agents/business/<uuid:agent_id>/verification/", ManagedAgentVerificationView.as_view(), name="managed-agent-verification"),
+    path("agents/business/<uuid:agent_id>/knowledge/", ManagedAgentKnowledgeView.as_view(), name="managed-agent-knowledge"),
+    path("agents/business/<uuid:agent_id>/knowledge/<uuid:source_id>/", ManagedAgentKnowledgeDeleteView.as_view(), name="managed-agent-knowledge-delete"),
+    path("agents/business/<uuid:agent_id>/catalog/", ManagedAgentCatalogView.as_view(), name="managed-agent-catalog"),
+    path("agents/business/<uuid:agent_id>/catalog/<uuid:item_id>/", ManagedAgentCatalogDeleteView.as_view(), name="managed-agent-catalog-delete"),
+    path("agents/business/<uuid:agent_id>/tools/", ManagedAgentToolView.as_view(), name="managed-agent-tool"),
+    path("agents/business/<uuid:agent_id>/tools/<uuid:connection_id>/", ManagedAgentToolDeleteView.as_view(), name="managed-agent-tool-delete"),
+    path("agents/business/<uuid:agent_id>/sandbox/", ManagedAgentSandboxView.as_view(), name="managed-agent-sandbox"),
+    path("agents/business/<uuid:agent_id>/activate/", ManagedAgentActivationView.as_view(), name="managed-agent-activate"),
     path("agents/handle/<slug:network_handle>/", PublicAgentHandleView.as_view(), name="agent-handle"),
     path("agents/verify/<uuid:agent_id>/", PublicAgentVerificationView.as_view(), name="agent-verification"),
     path("agents/verify/<uuid:agent_id>/trust/", PublicTrustHistoryView.as_view(), name="agent-trust-history"),

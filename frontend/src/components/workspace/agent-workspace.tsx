@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
+import { FormEvent, KeyboardEvent, ReactNode, useEffect, useState } from "react";
 
 import { Icon } from "@/components/workspace/icons";
 import { SettingsView } from "@/components/workspace/settings-view";
-import { AgentConnection, ApiError, AuthSession, ResolverCandidate, approveAgentConnection, createBusinessAgent, discoverAgents, getAuthSession, logoutAccount, requestAgentConnection } from "@/lib/client-api";
+import { ManagedAgentStudio } from "@/components/workspace/managed-agent-studio";
+import { AgentConnection, ApiError, AuthSession, BusinessAgent, Conversation, ConversationMessage, ResolverCandidate, ResolverTask, approveAgentConnection, createBusinessAgent, createConversation, deleteConversation, getAuthSession, getConversation, getResolverTask, listBusinessAgents, listConversations, logoutAccount, requestAgentConnection, sendConversationMessage, updateConversation } from "@/lib/client-api";
 
 type WorkspaceTab = "agent" | "tasks" | "studio" | "activity" | "settings";
 
@@ -35,7 +36,11 @@ export function AgentWorkspace() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("agent");
   const [message, setMessage] = useState("");
-  const [request, setRequest] = useState("");
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState("");
+  const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([]);
+  const [currentTask, setCurrentTask] = useState<ResolverTask | null>(null);
+  const [loadingConversation, setLoadingConversation] = useState(false);
   const [autoConnect, setAutoConnect] = useState(false);
   const [listening, setListening] = useState(false);
   const [approved, setApproved] = useState(false);
@@ -43,8 +48,8 @@ export function AgentWorkspace() {
   const [connection, setConnection] = useState<AgentConnection | null>(null);
   const [resolving, setResolving] = useState(false);
   const [resolverError, setResolverError] = useState("");
-  const [agentReply, setAgentReply] = useState("");
-  const hasTask = Boolean(request);
+  const request = currentTask?.request_text || [...conversationMessages].reverse().find((item) => item.role === "user")?.content || "";
+  const hasTask = Boolean(currentTask);
 
   useEffect(() => {
     let active = true;
@@ -69,6 +74,83 @@ export function AgentWorkspace() {
     };
   }, [router]);
 
+  useEffect(() => {
+    if (!session) return;
+    let active = true;
+    async function loadConversationList() {
+      setLoadingConversation(true);
+      try {
+        let items = (await listConversations()).filter((item) => item.status === "active");
+        if (!items.length) items = [await createConversation()];
+        if (!active) return;
+        setConversations(items);
+        await openConversation(items[0].conversation_id, active);
+      } catch (caught) {
+        if (active) setResolverError((caught as ApiError).message);
+      } finally {
+        if (active) setLoadingConversation(false);
+      }
+    }
+    loadConversationList();
+    return () => { active = false; };
+  }, [session]);
+
+  async function openConversation(conversationId: string, active = true) {
+    setActiveConversationId(conversationId);
+    setApproved(false);
+    setCandidate(null);
+    setConnection(null);
+    setCurrentTask(null);
+    const detail = await getConversation(conversationId);
+    if (!active) return;
+    setConversationMessages(detail.messages);
+    const taskMessage = [...detail.messages].reverse().find((item) => item.task_id);
+    if (taskMessage?.task_id) {
+      const task = await getResolverTask(taskMessage.task_id);
+      if (!active) return;
+      setCurrentTask(task);
+      setCandidate(task.candidates[0] || null);
+    }
+  }
+
+  async function startNewConversation() {
+    setLoadingConversation(true);
+    try {
+      const created = await createConversation();
+      setConversations((items) => [created, ...items]);
+      setActiveConversationId(created.conversation_id);
+      setConversationMessages([]);
+      setCurrentTask(null);
+      setCandidate(null);
+      setConnection(null);
+      setApproved(false);
+      setResolverError("");
+    } catch (caught) {
+      setResolverError((caught as ApiError).message);
+    } finally {
+      setLoadingConversation(false);
+    }
+  }
+
+  async function leaveCurrentConversation(action: "archive" | "delete") {
+    if (!activeConversationId) return;
+    if (action === "delete" && !window.confirm("Permanently delete this encrypted conversation? This cannot be undone.")) return;
+    setLoadingConversation(true);
+    setResolverError("");
+    try {
+      if (action === "archive") await updateConversation(activeConversationId, { status: "archived" });
+      else await deleteConversation(activeConversationId);
+      let items = (await listConversations()).filter((item) => item.status === "active");
+      if (!items.length) items = [await createConversation()];
+      setConversations(items);
+      await openConversation(items[0].conversation_id);
+    } catch (caught) {
+      setResolverError((caught as ApiError).message);
+    } finally {
+      setLoadingConversation(false);
+    }
+  }
+
   async function signOut() {
     await logoutAccount();
     router.replace("/");
@@ -82,18 +164,32 @@ export function AgentWorkspace() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     const cleanMessage = message.trim();
-    if (!cleanMessage) return;
-    setRequest(cleanMessage);
+    if (!cleanMessage || resolving) return;
+    if (!activeConversationId) {
+      setResolverError("Your conversation is still loading. Please try again in a moment.");
+      return;
+    }
+    const optimisticId = `pending-${Date.now()}`;
+    const optimistic: ConversationMessage = {
+      message_id: optimisticId,
+      role: "user",
+      sequence: conversationMessages.length + 1,
+      content: cleanMessage,
+      task_id: null,
+      created_at: new Date().toISOString(),
+    };
+    setConversationMessages((items) => [...items, optimistic]);
     setMessage("");
     setApproved(false);
     setCandidate(null);
     setConnection(null);
     setResolverError("");
-    setAgentReply("");
     setResolving(true);
     try {
-      const task = await discoverAgents(cleanMessage);
-      setAgentReply(task.agent_response);
+      const result = await sendConversationMessage(activeConversationId, cleanMessage);
+      const task = result.task;
+      setConversationMessages((items) => [...items.filter((item) => item.message_id !== optimisticId), result.user_message, result.agent_message]);
+      setCurrentTask(task);
       const topCandidate = task.candidates[0] || null;
       setCandidate(topCandidate);
       if (topCandidate) {
@@ -101,7 +197,9 @@ export function AgentWorkspace() {
         setConnection(nextConnection);
         setApproved(nextConnection.status === "approved" || nextConnection.status === "active");
       }
+      listConversations().then(setConversations).catch(() => undefined);
     } catch (caught) {
+      setConversationMessages((items) => items.filter((item) => item.message_id !== optimisticId));
       setResolverError((caught as ApiError).message);
     } finally {
       setResolving(false);
@@ -169,11 +267,18 @@ export function AgentWorkspace() {
             listening={listening}
             message={message}
             request={request}
+            messages={conversationMessages}
+            conversations={conversations}
+            activeConversationId={activeConversationId}
+            loadingConversation={loadingConversation}
             candidate={candidate}
             resolving={resolving}
-          resolverError={resolverError}
-            agentReply={agentReply}
+            resolverError={resolverError}
             onApprove={approveConnection}
+            onConversationChange={(conversationId) => openConversation(conversationId).catch((caught) => setResolverError((caught as ApiError).message))}
+            onNewConversation={startNewConversation}
+            onArchiveConversation={() => leaveCurrentConversation("archive")}
+            onDeleteConversation={() => leaveCurrentConversation("delete")}
             onChoosePrompt={setMessage}
             onMessageChange={setMessage}
             onSubmit={submit}
@@ -196,20 +301,27 @@ export function AgentWorkspace() {
 }
 
 function AgentView(props: {
+  activeConversationId: string;
   agentName: string;
   approved: boolean;
   autoConnect: boolean;
   candidate: ResolverCandidate | null;
-  agentReply: string;
+  conversations: Conversation[];
   hasTask: boolean;
   listening: boolean;
+  loadingConversation: boolean;
   message: string;
+  messages: ConversationMessage[];
   request: string;
   resolving: boolean;
   resolverError: string;
   onApprove: () => void;
+  onArchiveConversation: () => void;
   onChoosePrompt: (prompt: string) => void;
+  onConversationChange: (conversationId: string) => void;
+  onDeleteConversation: () => void;
   onMessageChange: (message: string) => void;
+  onNewConversation: () => void;
   onSubmit: (event: FormEvent) => void;
   onComposerKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onToggleListening: () => void;
@@ -222,13 +334,34 @@ function AgentView(props: {
           <VoiceListeningView onCancel={props.onToggleListening} onFinish={props.onToggleListening} />
         ) : (
           <>
-            <div className="agent-chat__bar"><span><i />Agen is online</span><span><Icon name="shield" />Private conversation</span></div>
+            <div className="agent-chat__bar">
+              <span><i />{props.agentName} is online</span>
+              <div className="conversation-controls">
+                <label>
+                  <span className="sr-only">Current conversation</span>
+                  <select value={props.activeConversationId} onChange={(event) => props.onConversationChange(event.target.value)} disabled={props.loadingConversation}>
+                    {props.conversations.map((conversation) => <option key={conversation.conversation_id} value={conversation.conversation_id}>{conversation.title}</option>)}
+                  </select>
+                </label>
+                <button type="button" onClick={props.onNewConversation} disabled={props.loadingConversation} aria-label="Start a new conversation"><Icon name="plus" />New</button>
+              </div>
+              <span className="private-label"><Icon name="shield" />Encrypted conversation</span>
+            </div>
             <div className="agent-chat__messages" aria-live="polite">
-          {props.hasTask ? (
+          {props.messages.length || props.resolving || props.resolverError ? (
             <div className="chat-thread">
-              <div className="chat-time">Just now</div>
-              <div className="chat-bubble chat-bubble--user">{props.request}</div>
-              {props.resolving ? <AgentWorkingState agentName={props.agentName} /> : <div className="chat-agent-row"><span className="chat-agent-icon"><Icon name="spark" /></span><div className="chat-bubble chat-bubble--agent">{props.resolverError ? `I could not complete discovery: ${props.resolverError}` : props.candidate ? `${props.agentReply} I found ${props.candidate.name}. ${props.approved ? "The scoped connection is approved and ready." : "I need your approval before I connect."}` : props.agentReply || "I could not find a verified agent with the required capabilities yet."}</div></div>}
+              {props.messages.map((item) => item.role === "user" ? (
+                <div className="chat-message chat-message--user" key={item.message_id}>
+                  <time>{formatMessageTime(item.created_at)}</time>
+                  <div className="chat-bubble chat-bubble--user">{item.content}</div>
+                </div>
+              ) : (
+                <div className="chat-message chat-message--agent" key={item.message_id}>
+                  <div className="chat-agent-row"><span className="chat-agent-icon"><Icon name="spark" /></span><div><time>{props.agentName} · {formatMessageTime(item.created_at)}</time><div className="chat-bubble chat-bubble--agent"><AgentReply content={item.content} /></div></div></div>
+                </div>
+              ))}
+              {props.resolving ? <AgentWorkingState agentName={props.agentName} /> : null}
+              {props.resolverError ? <div className="chat-error" role="alert">I could not process that request. {props.resolverError}</div> : null}
               {!props.resolving && props.candidate ? <ConnectionCard approved={props.approved} candidate={props.candidate} onApprove={props.onApprove} /> : null}
             </div>
           ) : (
@@ -245,7 +378,7 @@ function AgentView(props: {
               <form className="agent-composer" onSubmit={props.onSubmit}>
                 <textarea rows={1} value={props.message} onChange={(event) => props.onMessageChange(event.target.value)} onKeyDown={props.onComposerKeyDown} placeholder="Message Agen..." aria-label="Message Agen" />
                 <button type="button" onClick={props.onToggleListening} aria-label="Talk to Agen"><Icon name="mic" /></button>
-                <button type="submit" className="agent-composer__send" aria-label="Send message"><Icon name="send" /></button>
+                <button type="submit" className="agent-composer__send" aria-label="Send message" disabled={props.resolving || props.loadingConversation || !props.activeConversationId || !props.message.trim()}><Icon name="send" /></button>
               </form>
               <span>Enter to send, Shift + Enter for a new line</span>
             </div>
@@ -259,10 +392,83 @@ function AgentView(props: {
           {props.hasTask ? <><h3>{props.request}</h3><div className="mini-progress"><span className="is-done">Understood</span><span className="is-done">Agent matched</span><span className={props.approved ? "is-done" : ""}>Connected</span></div><button type="button" onClick={props.onViewTasks}>View task details <Icon name="chevron" /></button></> : <div className="context-empty"><Icon name="clock" /><p>Your current task will appear here as Agen works.</p></div>}
         </section>
         <section className="context-card"><div className="context-card__head"><span>Connection mode</span><Icon name="shield" /></div><div className="mode-row"><div><strong>{props.autoConnect ? "Automatic" : "Ask every time"}</strong><small>{props.autoConnect ? "Trusted agents can connect automatically" : "You approve each specialist connection"}</small></div><span className={props.autoConnect ? "mode-indicator mode-indicator--auto" : "mode-indicator"}>{props.autoConnect ? "Auto" : "Manual"}</span></div></section>
-        <section className="context-privacy"><Icon name="shield" /><div><strong>Private by design</strong><span>Your data is only shared when a task requires it.</span></div></section>
+        <section className="context-card conversation-history">
+          <div className="context-card__head"><span>Recent conversations</span><button type="button" onClick={props.onNewConversation}>New</button></div>
+          <div>{props.conversations.slice(0, 5).map((conversation) => <button type="button" key={conversation.conversation_id} className={conversation.conversation_id === props.activeConversationId ? "is-active" : ""} onClick={() => props.onConversationChange(conversation.conversation_id)}><strong>{conversation.title}</strong><small>{conversation.message_count ? `${conversation.message_count} messages` : "Empty conversation"}</small></button>)}</div>
+          <div className="conversation-history__actions"><button type="button" onClick={props.onArchiveConversation}>Archive current</button><button type="button" onClick={props.onDeleteConversation}>Delete</button></div>
+        </section>
+        <section className="context-privacy"><Icon name="shield" /><div><strong>Encrypted at rest</strong><span>Messages stay private and only approved task context is shared.</span></div></section>
       </aside>
     </div>
   );
+}
+
+function formatMessageTime(value: string) {
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(value));
+}
+
+function AgentReply({ content }: { content: string }) {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const blocks: ReactNode[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index].trim();
+    if (!line) {
+      index += 1;
+      continue;
+    }
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      blocks.push(<h3 key={`heading-${index}`}>{formatInline(heading[2])}</h3>);
+      index += 1;
+      continue;
+    }
+    const unordered = line.match(/^[-*]\s+(.+)$/);
+    if (unordered) {
+      const items: ReactNode[] = [];
+      while (index < lines.length) {
+        const match = lines[index].trim().match(/^[-*]\s+(.+)$/);
+        if (!match) break;
+        items.push(<li key={`bullet-${index}`}>{formatInline(match[1])}</li>);
+        index += 1;
+      }
+      blocks.push(<ul key={`list-${index}`}>{items}</ul>);
+      continue;
+    }
+    const ordered = line.match(/^\d+[.)]\s+(.+)$/);
+    if (ordered) {
+      const items: ReactNode[] = [];
+      while (index < lines.length) {
+        const match = lines[index].trim().match(/^\d+[.)]\s+(.+)$/);
+        if (!match) break;
+        items.push(<li key={`step-${index}`}>{formatInline(match[1])}</li>);
+        index += 1;
+      }
+      blocks.push(<ol key={`steps-${index}`}>{items}</ol>);
+      continue;
+    }
+    const paragraph = [line];
+    index += 1;
+    while (index < lines.length && lines[index].trim() && !/^(#{1,3})\s+|^[-*]\s+|^\d+[.)]\s+/.test(lines[index].trim())) {
+      paragraph.push(lines[index].trim());
+      index += 1;
+    }
+    blocks.push(<p key={`paragraph-${index}`}>{formatInline(paragraph.join(" "))}</p>);
+  }
+
+  return <div className="agent-reply">{blocks}</div>;
+}
+
+function formatInline(value: string): ReactNode[] {
+  const tokens = value.split(/(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)]+\))/g);
+  return tokens.filter(Boolean).map((token, index) => {
+    if (token.startsWith("**") && token.endsWith("**")) return <strong key={index}>{token.slice(2, -2)}</strong>;
+    if (token.startsWith("`") && token.endsWith("`")) return <code key={index}>{token.slice(1, -1)}</code>;
+    const link = token.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
+    if (link) return <a key={index} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a>;
+    return token;
+  });
 }
 
 function AgentWorkingState({ agentName }: { agentName: string }) {
@@ -321,9 +527,17 @@ function ActivityView({ hasTask }: { hasTask: boolean }) {
 
 function BusinessAgentsView() {
   const [mode, setMode] = useState<"managed" | "external">("managed");
-  const [createdAgent, setCreatedAgent] = useState<{ name: string; company: string; id: string } | null>(null);
+  const [createdAgent, setCreatedAgent] = useState<BusinessAgent | null>(null);
+  const [businessAgents, setBusinessAgents] = useState<BusinessAgent[]>([]);
+  const [setupAgentId, setSetupAgentId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    listBusinessAgents().then(setBusinessAgents).catch(() => undefined);
+  }, []);
+
+  if (setupAgentId) return <ManagedAgentStudio agentId={setupAgentId} onBack={() => setSetupAgentId("")} />;
 
   async function submitBusinessAgent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -342,7 +556,8 @@ function BusinessAgentsView() {
         summary: mode === "managed" ? String(form.get("summary") || "") : undefined,
         capabilities: String(form.get("capabilities") || "").split(",").map((item) => item.trim()).filter(Boolean),
       });
-      setCreatedAgent({ name: agent.name, company: agent.company_name, id: agent.agent_id });
+      setCreatedAgent(agent);
+      setBusinessAgents((items) => [agent, ...items]);
     } catch (caught) {
       const apiError = caught as ApiError;
       const fieldMessage = apiError.fields
@@ -360,10 +575,10 @@ function BusinessAgentsView() {
         <div className="studio-success__mark"><Icon name="shield" /></div>
         <span className="view-kicker">Agent identity created</span>
         <h2>{createdAgent.name} is ready for verification.</h2>
-        <p>{createdAgent.company} now has a draft business agent. Its identity is permanent, but it will not appear on the network until verification is complete.</p>
-        <div className="agent-id-block"><span>Unique agent ID</span><code>{createdAgent.id}</code></div>
+        <p>{createdAgent.company_name} now has a draft business agent. Its identity is permanent, but it will not appear on the network until verification is complete.</p>
+        <div className="agent-id-block"><span>Unique agent ID</span><code>{createdAgent.agent_id}</code></div>
         <div className="studio-next"><div><b>1</b><span><strong>Verify ownership</strong><small>Confirm your business identity.</small></span></div><div><b>2</b><span><strong>{mode === "external" ? "Test endpoint" : "Configure behavior"}</strong><small>{mode === "external" ? "We will run a secure handshake." : "Add instructions, tools, and limits."}</small></span></div><div><b>3</b><span><strong>Activate on the network</strong><small>Begin receiving trusted requests.</small></span></div></div>
-        <div className="studio-success__actions"><button type="button" onClick={() => setCreatedAgent(null)}>Add another agent</button><button type="button" className="is-primary">Continue setup <Icon name="chevron" /></button></div>
+        <div className="studio-success__actions"><button type="button" onClick={() => setCreatedAgent(null)}>Add another agent</button><button type="button" className="is-primary" onClick={() => setSetupAgentId(createdAgent.agent_id)}>Continue setup <Icon name="chevron" /></button></div>
       </section>
     );
   }
@@ -371,6 +586,7 @@ function BusinessAgentsView() {
   return (
     <section className="tab-view studio-view">
       <div className="studio-intro"><span className="view-kicker">For businesses</span><h2>How do you want to bring your agent online?</h2><p>Create an agent hosted by Agen, or connect one your team already operates. Both receive a unique identity and independent trust score.</p></div>
+      {businessAgents.some((agent) => agent.hosting_type === "managed") ? <div className="existing-agents"><div><span className="view-kicker">Your managed agents</span><strong>Continue setup</strong></div><div>{businessAgents.filter((agent) => agent.hosting_type === "managed").map((agent) => <button type="button" key={agent.agent_id} onClick={() => setSetupAgentId(agent.agent_id)}><span><Icon name="business" /></span><div><strong>{agent.name}</strong><small>@{agent.network_handle} · {agent.status}</small></div><Icon name="chevron" /></button>)}</div></div> : null}
       <div className="studio-mode" role="radiogroup" aria-label="Agent setup method">
         <button type="button" role="radio" aria-checked={mode === "managed"} className={mode === "managed" ? "is-selected" : ""} onClick={() => setMode("managed")}><span><Icon name="plus" /></span><div><strong>Create a custom agent</strong><p>Build its behavior, tools, and permissions inside Agen.</p></div><i /></button>
         <button type="button" role="radio" aria-checked={mode === "external"} className={mode === "external" ? "is-selected" : ""} onClick={() => setMode("external")}><span><Icon name="link" /></span><div><strong>Connect an existing agent</strong><p>Register your HTTPS endpoint and keep hosting it yourself.</p></div><i /></button>

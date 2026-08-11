@@ -1,6 +1,11 @@
 from django.contrib import admin
+from django.utils import timezone
 
-from .models import Agent, AgentActivity, AgentConnection, DataGrant, Task, TaskCandidate, TaskResult, TaskStep, TrustEvent
+from .models import (
+    Agent, AgentActivity, AgentAuditEvent, AgentCatalogItem, AgentConnection, AgentKnowledgeSource,
+    AgentTestRun, AgentToolConnection, DataGrant, ManagedAgentProfile, Task, TaskCandidate, TaskResult,
+    TaskStep, TrustEvent,
+)
 
 
 class AgentActivityInline(admin.TabularInline):
@@ -69,3 +74,67 @@ class TaskResultAdmin(admin.ModelAdmin):
     list_display = ("result_id", "task", "connection", "created_at", "delivered_at")
     search_fields = ("result_id", "task__task_id", "summary")
     readonly_fields = ("result_id", "created_at")
+
+
+@admin.action(description="Approve selected business verifications")
+def approve_business_verification(modeladmin, request, queryset):
+    for profile in queryset.select_related("agent"):
+        profile.verification_status = ManagedAgentProfile.VerificationStatus.VERIFIED
+        profile.verification_level = profile.requested_verification_level
+        profile.verification_method = ManagedAgentProfile.VerificationMethod.MANUAL_REVIEW
+        profile.save(update_fields=["verification_status", "verification_level", "verification_method", "updated_at"])
+        agent = profile.agent
+        if not agent.verified:
+            agent.verified = True
+            agent.identity_verified_at = timezone.now()
+            agent.save(update_fields=["verified", "identity_verified_at", "updated_at"])
+            TrustEvent.objects.create(
+                subject_agent=agent,
+                category=TrustEvent.Category.IDENTITY_VERIFIED,
+                outcome=TrustEvent.Outcome.POSITIVE,
+                score_delta="5.0",
+                metadata={"method": "admin_review", "level": profile.verification_level, "reviewer_id": request.user.pk},
+            )
+
+
+@admin.register(ManagedAgentProfile)
+class ManagedAgentProfileAdmin(admin.ModelAdmin):
+    list_display = ("agent", "verification_status", "verification_level", "verification_method", "business_domain", "template_key", "updated_at")
+    list_filter = ("verification_status", "verification_level", "verification_method", "template_key")
+    search_fields = ("agent__name", "agent__company_name", "business_domain")
+    actions = [approve_business_verification]
+
+
+@admin.register(AgentKnowledgeSource)
+class AgentKnowledgeSourceAdmin(admin.ModelAdmin):
+    list_display = ("title", "agent", "kind", "active", "updated_at")
+    list_filter = ("kind", "active")
+    search_fields = ("title", "agent__name")
+    readonly_fields = ("source_id", "content_ciphertext", "created_at", "updated_at")
+
+
+@admin.register(AgentCatalogItem)
+class AgentCatalogItemAdmin(admin.ModelAdmin):
+    list_display = ("name", "agent", "sku", "price", "currency", "availability", "active")
+    search_fields = ("name", "sku", "agent__name")
+
+
+@admin.register(AgentToolConnection)
+class AgentToolConnectionAdmin(admin.ModelAdmin):
+    list_display = ("display_name", "agent", "provider", "status", "last_tested_at")
+    list_filter = ("status", "provider")
+    readonly_fields = ("connection_id", "config_ciphertext", "created_at", "updated_at")
+
+
+@admin.register(AgentTestRun)
+class AgentTestRunAdmin(admin.ModelAdmin):
+    list_display = ("run_id", "agent", "status", "created_at")
+    list_filter = ("status",)
+    readonly_fields = ("run_id", "created_at")
+
+
+@admin.register(AgentAuditEvent)
+class AgentAuditEventAdmin(admin.ModelAdmin):
+    list_display = ("action", "agent", "actor", "created_at")
+    search_fields = ("action", "detail", "agent__name")
+    readonly_fields = ("event_id", "created_at")

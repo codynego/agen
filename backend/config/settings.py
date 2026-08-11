@@ -143,6 +143,9 @@ AUTH_CODE_IP_LIMIT = int(env("AUTH_CODE_IP_LIMIT", "20"))
 AUTH_DEV_LOGIN_CODE = env("AUTH_DEV_LOGIN_CODE", "").strip()
 if AUTH_DEV_LOGIN_CODE and (len(AUTH_DEV_LOGIN_CODE) != 6 or not AUTH_DEV_LOGIN_CODE.isdigit()):
     raise ImproperlyConfigured("AUTH_DEV_LOGIN_CODE must be empty or exactly six digits.")
+BUSINESS_DEV_VERIFICATION_CODE = env("BUSINESS_DEV_VERIFICATION_CODE", "246810").strip() if DEBUG else ""
+if BUSINESS_DEV_VERIFICATION_CODE and (len(BUSINESS_DEV_VERIFICATION_CODE) != 6 or not BUSINESS_DEV_VERIFICATION_CODE.isdigit()):
+    raise ImproperlyConfigured("BUSINESS_DEV_VERIFICATION_CODE must be empty or exactly six digits.")
 
 AGENT_LLM_PROVIDER = env("AGENT_LLM_PROVIDER", "openai").strip().lower()
 OPENAI_API_KEY = env("OPENAI_API_KEY", "").strip()

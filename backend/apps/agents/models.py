@@ -328,3 +328,145 @@ class ConversationMessage(models.Model):
                 name="unique_conversation_message_sequence",
             ),
         ]
+
+
+class ManagedAgentProfile(models.Model):
+    class VerificationStatus(models.TextChoices):
+        UNSUBMITTED = "unsubmitted", "Not submitted"
+        PENDING = "pending", "Pending review"
+        VERIFIED = "verified", "Verified"
+        REJECTED = "rejected", "Rejected"
+
+    class VerificationLevel(models.TextChoices):
+        NONE = "none", "Not verified"
+        BASIC = "basic", "Basic verified"
+        BUSINESS = "business", "Business verified"
+        ENHANCED = "enhanced", "Enhanced verified"
+
+    class VerificationMethod(models.TextChoices):
+        NONE = "none", "Not submitted"
+        DOMAIN_EMAIL = "domain_email", "Domain email"
+        MANUAL_REVIEW = "manual_review", "Manual business review"
+        DEVELOPMENT = "development", "Local development"
+
+    agent = models.OneToOneField(Agent, on_delete=models.CASCADE, related_name="managed_profile")
+    template_key = models.CharField(max_length=60, blank=True)
+    verification_status = models.CharField(
+        max_length=16,
+        choices=VerificationStatus.choices,
+        default=VerificationStatus.UNSUBMITTED,
+    )
+    business_domain = models.CharField(max_length=160, blank=True)
+    verification_level = models.CharField(max_length=16, choices=VerificationLevel.choices, default=VerificationLevel.NONE)
+    requested_verification_level = models.CharField(max_length=16, choices=VerificationLevel.choices, default=VerificationLevel.BUSINESS)
+    verification_method = models.CharField(max_length=24, choices=VerificationMethod.choices, default=VerificationMethod.NONE)
+    country = models.CharField(max_length=80, blank=True)
+    registration_number = models.CharField(max_length=120, blank=True)
+    business_phone = models.CharField(max_length=40, blank=True)
+    supporting_url = models.URLField(blank=True)
+    evidence_notes = models.TextField(blank=True)
+    instructions = models.TextField(blank=True)
+    tone = models.CharField(max_length=80, default="Helpful and concise")
+    human_handoff = models.TextField(blank=True)
+    verification_submitted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class AgentKnowledgeSource(models.Model):
+    class Kind(models.TextChoices):
+        NOTE = "note", "Business note"
+        FAQ = "faq", "FAQ"
+        DOCUMENT = "document", "Document"
+        WEBSITE = "website", "Website"
+
+    source_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="knowledge_sources")
+    kind = models.CharField(max_length=16, choices=Kind.choices, default=Kind.NOTE)
+    title = models.CharField(max_length=180)
+    content_ciphertext = models.TextField()
+    source_url = models.URLField(blank=True)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+
+
+class AgentCatalogItem(models.Model):
+    item_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="catalog_items")
+    name = models.CharField(max_length=180)
+    sku = models.CharField(max_length=100, blank=True)
+    description = models.TextField(blank=True)
+    price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    currency = models.CharField(max_length=8, default="NGN")
+    availability = models.CharField(max_length=80, default="Available")
+    active = models.BooleanField(default=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["agent", "sku"],
+                condition=~Q(sku=""),
+                name="unique_catalog_sku_per_agent",
+            ),
+        ]
+
+
+class AgentToolConnection(models.Model):
+    class Status(models.TextChoices):
+        CONFIGURED = "configured", "Configured"
+        CONNECTED = "connected", "Connected"
+        ERROR = "error", "Error"
+        DISCONNECTED = "disconnected", "Disconnected"
+
+    connection_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="tool_connections")
+    provider = models.CharField(max_length=80)
+    display_name = models.CharField(max_length=120)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.CONFIGURED)
+    scopes = models.JSONField(default=list, blank=True)
+    config_ciphertext = models.TextField(blank=True)
+    last_tested_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["display_name"]
+        constraints = [models.UniqueConstraint(fields=["agent", "provider"], name="unique_tool_provider_per_agent")]
+
+
+class AgentTestRun(models.Model):
+    class Status(models.TextChoices):
+        PASSED = "passed", "Passed"
+        NEEDS_CONFIGURATION = "needs_configuration", "Needs configuration"
+
+    run_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="test_runs")
+    prompt = models.TextField()
+    response = models.TextField()
+    status = models.CharField(max_length=24, choices=Status.choices)
+    matched_sources = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class AgentAuditEvent(models.Model):
+    event_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="audit_events")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    action = models.CharField(max_length=80)
+    detail = models.CharField(max_length=240, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]

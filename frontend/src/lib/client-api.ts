@@ -50,8 +50,34 @@ export type BusinessAgentInput = {
 
 export type BusinessAgent = BusinessAgentInput & {
   agent_id: string;
+  network_handle: string;
   status: string;
   trust_score: string;
+  verified: boolean;
+};
+
+export type ManagedAgentSetup = {
+  agent: {
+    agent_id: string; network_handle: string; name: string; company_name: string; category: string;
+    summary: string; status: string; verified: boolean; trust_score: string; capabilities: string[];
+    allowed_actions: string[]; blocked_actions: string[];
+  };
+  profile: {
+    template_key: string; verification_status: "unsubmitted" | "pending" | "verified" | "rejected";
+    verification_level: "none" | "basic" | "business" | "enhanced";
+    requested_verification_level: "basic" | "business" | "enhanced";
+    verification_method: "none" | "domain_email" | "manual_review" | "development";
+    business_domain: string; country: string; registration_number: string; business_phone: string;
+    supporting_url: string; evidence_notes: string; instructions: string; tone: string; human_handoff: string;
+  };
+  knowledge: Array<{ source_id: string; kind: string; title: string; content: string; source_url: string; active: boolean }>;
+  catalog: Array<{ item_id: string; name: string; sku: string; description: string; price: string | null; currency: string; availability: string; active: boolean }>;
+  tools: Array<{ connection_id: string; provider: string; display_name: string; status: string; scopes: string[]; has_secret_config: boolean }>;
+  tests: Array<{ run_id: string; prompt: string; response: string; status: string; matched_sources: string[]; created_at: string }>;
+  audit: Array<{ event_id: string; action: string; detail: string; created_at: string }>;
+  templates: Array<{ key: string; name: string; description: string; capabilities: string[]; instructions: string }>;
+  development_verification_enabled: boolean;
+  readiness: { ready: boolean; checks: Record<string, boolean>; required_verification_level: "basic" | "business" | "enhanced"; current_verification_level: "none" | "basic" | "business" | "enhanced" };
 };
 
 export type ResolverCandidate = {
@@ -187,8 +213,64 @@ export function createBusinessAgent(input: BusinessAgentInput) {
   return apiRequest<BusinessAgent>("/api/agents/business/", { method: "POST", body: JSON.stringify(input) });
 }
 
+export function listBusinessAgents() {
+  return apiRequest<BusinessAgent[]>("/api/agents/business/");
+}
+
+export function getManagedAgentSetup(agentId: string) {
+  return apiRequest<ManagedAgentSetup>(`/api/agents/business/${agentId}/setup/`);
+}
+
+export function updateManagedAgent(agentId: string, input: Record<string, unknown>) {
+  return apiRequest<ManagedAgentSetup>(`/api/agents/business/${agentId}/setup/`, { method: "PATCH", body: JSON.stringify(input) });
+}
+
+export function applyManagedTemplate(agentId: string, templateKey: string) {
+  return apiRequest<ManagedAgentSetup>(`/api/agents/business/${agentId}/template/${templateKey}/`, { method: "POST", body: "{}" });
+}
+
+export function submitManagedVerification(agentId: string, input: Record<string, unknown>) {
+  return apiRequest<ManagedAgentSetup>(`/api/agents/business/${agentId}/verification/`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function addManagedKnowledge(agentId: string, input: { kind: string; title: string; content: string; source_url?: string }) {
+  return apiRequest<ManagedAgentSetup["knowledge"][number]>(`/api/agents/business/${agentId}/knowledge/`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function deleteManagedKnowledge(agentId: string, sourceId: string) {
+  return apiRequest<void>(`/api/agents/business/${agentId}/knowledge/${sourceId}/`, { method: "DELETE", body: "{}" });
+}
+
+export function addManagedCatalogItem(agentId: string, input: Record<string, unknown>) {
+  return apiRequest<ManagedAgentSetup["catalog"][number]>(`/api/agents/business/${agentId}/catalog/`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function deleteManagedCatalogItem(agentId: string, itemId: string) {
+  return apiRequest<void>(`/api/agents/business/${agentId}/catalog/${itemId}/`, { method: "DELETE", body: "{}" });
+}
+
+export function connectManagedTool(agentId: string, input: Record<string, unknown>) {
+  return apiRequest<ManagedAgentSetup["tools"][number]>(`/api/agents/business/${agentId}/tools/`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function disconnectManagedTool(agentId: string, connectionId: string) {
+  return apiRequest<void>(`/api/agents/business/${agentId}/tools/${connectionId}/`, { method: "DELETE", body: "{}" });
+}
+
+export function testManagedAgent(agentId: string, prompt: string) {
+  return apiRequest<ManagedAgentSetup["tests"][number]>(`/api/agents/business/${agentId}/sandbox/`, { method: "POST", body: JSON.stringify({ prompt }) });
+}
+
+export function activateManagedAgent(agentId: string) {
+  return apiRequest<ManagedAgentSetup>(`/api/agents/business/${agentId}/activate/`, { method: "POST", body: "{}" });
+}
+
 export function discoverAgents(request_text: string) {
   return apiRequest<ResolverTask>("/api/resolver/discover/", { method: "POST", body: JSON.stringify({ request_text }) });
+}
+
+export function getResolverTask(taskId: string) {
+  return apiRequest<ResolverTask>(`/api/resolver/tasks/${taskId}/`);
 }
 
 export function listConversations() {

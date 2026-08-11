@@ -1,3 +1,5 @@
+import hashlib
+
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -7,7 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import AgentConnection, Task, TaskCandidate, TaskResult, TaskStep
+from .models import AgentActivity, AgentConnection, Task, TaskCandidate, TaskResult, TaskStep, TrustEvent
 from .resolver import approve_connection, discover_agents, request_connection
 from .resolver_serializers import (
     ConnectionApprovalSerializer,
@@ -126,6 +128,33 @@ class ConnectionResultView(APIView):
         connection.task.status = Task.Status.COMPLETED
         connection.task.save(update_fields=["status", "updated_at"])
         connection.task.steps.filter(position=3).update(status=TaskStep.Status.COMPLETED)
+        evidence_hash = serializer.validated_data.get("evidence_hash") or hashlib.sha256(
+            serializer.validated_data["summary"].encode("utf-8")
+        ).hexdigest()
+        TrustEvent.objects.create(
+            subject_agent=connection.provider_agent,
+            source_agent=connection.requester_agent,
+            category=TrustEvent.Category.TASK_COMPLETED,
+            outcome=TrustEvent.Outcome.POSITIVE,
+            score_delta="2.0",
+            evidence_hash=evidence_hash,
+            metadata={"task_id": str(connection.task.task_id), "result_id": str(result.result_id)},
+        )
+        AgentActivity.objects.create(
+            agent=connection.provider_agent,
+            title="Network task completed",
+            detail=f"Delivered result for task {connection.task.task_id}",
+        )
+        if connection.provider_agent.hosting_type == connection.provider_agent.HostingType.MANAGED:
+            from .managed_agents import audit
+
+            audit(
+                connection.provider_agent,
+                request.user,
+                "network_task_completed",
+                serializer.validated_data["summary"][:240],
+                {"task_id": str(connection.task.task_id), "evidence_hash": evidence_hash},
+            )
         if hasattr(connection.task, "conversation_message"):
             from .conversation_services import append_message
             from .models import ConversationMessage

@@ -19,9 +19,13 @@ from .resolver_views import (
     TaskDetailView,
     TaskListView,
 )
+from .conversation_views import ConversationDetailView, ConversationListCreateView, ConversationMessageView
 
 urlpatterns = [
     path("dashboard/", DashboardView.as_view(), name="dashboard"),
+    path("conversations/", ConversationListCreateView.as_view(), name="conversation-list-create"),
+    path("conversations/<uuid:conversation_id>/", ConversationDetailView.as_view(), name="conversation-detail"),
+    path("conversations/<uuid:conversation_id>/messages/", ConversationMessageView.as_view(), name="conversation-message"),
     path("resolver/discover/", ResolverDiscoveryView.as_view(), name="resolver-discover"),
     path("resolver/tasks/", TaskListView.as_view(), name="resolver-task-list"),
     path("resolver/tasks/<uuid:task_id>/", TaskDetailView.as_view(), name="resolver-task-detail"),

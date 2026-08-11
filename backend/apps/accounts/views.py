@@ -159,5 +159,11 @@ class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        from apps.agents.models import Conversation
+
+        Conversation.objects.filter(
+            owner=request.user,
+            retention_policy=Conversation.RetentionPolicy.SESSION,
+        ).delete()
         logout(request)
         return Response(status=status.HTTP_204_NO_CONTENT)

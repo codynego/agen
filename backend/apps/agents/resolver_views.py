@@ -126,4 +126,13 @@ class ConnectionResultView(APIView):
         connection.task.status = Task.Status.COMPLETED
         connection.task.save(update_fields=["status", "updated_at"])
         connection.task.steps.filter(position=3).update(status=TaskStep.Status.COMPLETED)
+        if hasattr(connection.task, "conversation_message"):
+            from .conversation_services import append_message
+            from .models import ConversationMessage
+
+            append_message(
+                connection.task.conversation_message.conversation,
+                ConversationMessage.Role.AGENT,
+                serializer.validated_data["summary"],
+            )
         return Response(TaskResultSerializer(result).data, status=status.HTTP_201_CREATED)

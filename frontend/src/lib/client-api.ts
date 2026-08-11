@@ -72,6 +72,7 @@ export type ResolverCandidate = {
 export type ResolverTask = {
   task_id: string;
   request_text: string;
+  agent_response: string;
   discovery_spec: { capabilities: string[]; location?: string };
   status: string;
   risk_level: string;
@@ -86,6 +87,35 @@ export type AgentConnection = {
   requested_scopes: string[];
   provider: { agent_id: string; network_handle: string; name: string; capabilities: string[]; endpoint?: string };
   data_grant: { grant_id: string; scopes: string[]; expires_at: string; active: boolean } | null;
+};
+
+export type ConversationMessage = {
+  message_id: string;
+  role: "user" | "agent" | "system";
+  sequence: number;
+  content: string;
+  task_id: string | null;
+  created_at: string;
+};
+
+export type Conversation = {
+  conversation_id: string;
+  title: string;
+  status: "active" | "archived";
+  retention_policy: "session" | "30_days" | "forever";
+  expires_at: string | null;
+  last_message_at: string | null;
+  message_count: number;
+  latest_message: string;
+  created_at: string;
+};
+
+export type ConversationDetail = Conversation & { messages: ConversationMessage[] };
+
+export type ConversationSendResult = {
+  user_message: ConversationMessage;
+  agent_message: ConversationMessage;
+  task: ResolverTask;
 };
 
 export class ApiError extends Error {
@@ -159,6 +189,39 @@ export function createBusinessAgent(input: BusinessAgentInput) {
 
 export function discoverAgents(request_text: string) {
   return apiRequest<ResolverTask>("/api/resolver/discover/", { method: "POST", body: JSON.stringify({ request_text }) });
+}
+
+export function listConversations() {
+  return apiRequest<Conversation[]>("/api/conversations/");
+}
+
+export function createConversation(retention_policy: Conversation["retention_policy"] = "30_days") {
+  return apiRequest<Conversation>("/api/conversations/", {
+    method: "POST",
+    body: JSON.stringify({ retention_policy }),
+  });
+}
+
+export function getConversation(conversationId: string) {
+  return apiRequest<ConversationDetail>(`/api/conversations/${conversationId}/`);
+}
+
+export function sendConversationMessage(conversationId: string, content: string) {
+  return apiRequest<ConversationSendResult>(`/api/conversations/${conversationId}/messages/`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
+}
+
+export function updateConversation(conversationId: string, input: { title?: string; status?: "active" | "archived" }) {
+  return apiRequest<Conversation>(`/api/conversations/${conversationId}/`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteConversation(conversationId: string) {
+  return apiRequest<void>(`/api/conversations/${conversationId}/`, { method: "DELETE", body: "{}" });
 }
 
 export function requestAgentConnection(taskId: string, candidateHandle: string, scopes: string[]) {

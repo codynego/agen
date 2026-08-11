@@ -13,6 +13,20 @@
   --font-body: "Aptos", "Segoe UI Variable Text", sans-serif;
 }
 
+/* Live personal-agent work state */
+.agent-thinking { width: min(470px, calc(100% - 36px)); margin-left: 36px; padding: 15px; border: 1px solid #dbe4dc; border-radius: 17px; background: linear-gradient(145deg, #fbfdfa, #f0f5ef); box-shadow: 0 14px 36px rgba(31,52,39,.07); animation: settings-reveal .25s ease both; }
+.agent-thinking__head { display: flex; align-items: center; gap: 10px; }.agent-thinking__orb { position: relative; width: 38px; height: 38px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 12px; color: var(--moss); background: var(--lime); box-shadow: 0 0 0 5px rgba(201,245,106,.18); }.agent-thinking__orb > svg { width: 17px; height: 17px; }.agent-thinking__orb > i { position: absolute; inset: -6px; border: 1px solid rgba(31,74,53,.18); border-radius: 15px; animation: agent-scan 1.8s ease-out infinite; }.agent-thinking__orb > i:last-child { animation-delay: .9s; }
+.agent-thinking__head > div { flex: 1; }.agent-thinking__head strong, .agent-thinking__head small { display: block; }.agent-thinking__head strong { font: 600 11px/1.2 var(--font-heading); letter-spacing: -.02em; }.agent-thinking__head small { margin-top: 3px; color: #7e8981; font-size: 7px; }.agent-thinking__pulse { display: flex; align-items: center; gap: 3px; }.agent-thinking__pulse i { width: 4px; height: 4px; border-radius: 50%; background: var(--moss); animation: agent-dot 1.1s ease-in-out infinite; }.agent-thinking__pulse i:nth-child(2) { animation-delay: .14s; }.agent-thinking__pulse i:nth-child(3) { animation-delay: .28s; }
+.agent-thinking__steps { margin-top: 14px; padding-top: 12px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; border-top: 1px solid #dfe6df; }.agent-thinking__steps span { display: flex; align-items: flex-start; gap: 5px; color: #77837a; font-size: 7px; line-height: 1.35; opacity: .38; animation: agent-stage 2.7s ease-in-out infinite; }.agent-thinking__steps span:nth-child(2) { animation-delay: .9s; }.agent-thinking__steps span:nth-child(3) { animation-delay: 1.8s; }.agent-thinking__steps span > i { width: 6px; height: 6px; margin-top: 2px; flex: 0 0 auto; border: 1px solid #809087; border-radius: 50%; }
+
+@keyframes agent-scan { from { opacity: .55; transform: scale(.75); } to { opacity: 0; transform: scale(1.2); } }
+@keyframes agent-dot { 50% { opacity: .25; transform: translateY(-2px); } }
+@keyframes agent-stage { 0%, 28%, 100% { opacity: .38; } 10%, 20% { opacity: 1; color: var(--moss); } }
+
+@media (max-width: 520px) {
+  .agent-thinking { width: calc(100% - 28px); margin-left: 28px; padding: 13px; }.agent-thinking__steps { grid-template-columns: 1fr; gap: 6px; }
+}
+
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body {

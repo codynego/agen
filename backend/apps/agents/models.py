@@ -162,6 +162,7 @@ class Task(models.Model):
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="agent_tasks")
     personal_agent = models.ForeignKey(Agent, on_delete=models.PROTECT, related_name="owned_tasks")
     request_text = models.TextField()
+    agent_response = models.TextField(blank=True)
     discovery_spec = models.JSONField(default=dict)
     status = models.CharField(max_length=24, choices=Status.choices, default=Status.DISCOVERING)
     risk_level = models.CharField(max_length=12, choices=RiskLevel.choices, default=RiskLevel.LOW)
@@ -267,3 +268,63 @@ class TaskResult(models.Model):
     evidence_hash = models.CharField(max_length=64, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
+
+
+class Conversation(models.Model):
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        ARCHIVED = "archived", "Archived"
+
+    class RetentionPolicy(models.TextChoices):
+        SESSION = "session", "Until sign out"
+        THIRTY_DAYS = "30_days", "30 days"
+        FOREVER = "forever", "Keep until deleted"
+
+    conversation_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="conversations")
+    agent = models.ForeignKey(Agent, on_delete=models.PROTECT, related_name="conversations")
+    title = models.CharField(max_length=120, default="New conversation")
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
+    retention_policy = models.CharField(
+        max_length=16,
+        choices=RetentionPolicy.choices,
+        default=RetentionPolicy.THIRTY_DAYS,
+    )
+    expires_at = models.DateTimeField(null=True, blank=True)
+    last_message_at = models.DateTimeField(null=True, blank=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-last_message_at", "-created_at"]
+
+
+class ConversationMessage(models.Model):
+    class Role(models.TextChoices):
+        USER = "user", "User"
+        AGENT = "agent", "Agent"
+        SYSTEM = "system", "System"
+
+    message_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+    conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name="messages")
+    task = models.OneToOneField(
+        Task,
+        on_delete=models.SET_NULL,
+        related_name="conversation_message",
+        null=True,
+        blank=True,
+    )
+    role = models.CharField(max_length=12, choices=Role.choices)
+    sequence = models.PositiveIntegerField()
+    content_ciphertext = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["sequence"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["conversation", "sequence"],
+                name="unique_conversation_message_sequence",
+            ),
+        ]

@@ -143,3 +143,22 @@ AUTH_CODE_IP_LIMIT = int(env("AUTH_CODE_IP_LIMIT", "20"))
 AUTH_DEV_LOGIN_CODE = env("AUTH_DEV_LOGIN_CODE", "").strip()
 if AUTH_DEV_LOGIN_CODE and (len(AUTH_DEV_LOGIN_CODE) != 6 or not AUTH_DEV_LOGIN_CODE.isdigit()):
     raise ImproperlyConfigured("AUTH_DEV_LOGIN_CODE must be empty or exactly six digits.")
+
+AGENT_LLM_PROVIDER = env("AGENT_LLM_PROVIDER", "openai").strip().lower()
+OPENAI_API_KEY = env("OPENAI_API_KEY", "").strip()
+OPENAI_BASE_URL = env("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
+AGENT_DEFAULT_MODEL = env("AGENT_DEFAULT_MODEL", "gpt-5-mini").strip()
+AGENT_REASONING_MODEL = env("AGENT_REASONING_MODEL", "gpt-5.1").strip()
+AGENT_VOICE_MODEL = env("AGENT_VOICE_MODEL", "gpt-realtime-mini").strip()
+AGENT_EMBEDDING_MODEL = env("AGENT_EMBEDDING_MODEL", "text-embedding-3-small").strip()
+AGENT_MODEL_TIMEOUT_SECONDS = int(env("AGENT_MODEL_TIMEOUT_SECONDS", "30"))
+CONVERSATION_ENCRYPTION_KEYS = [
+    key.strip()
+    for key in env("CONVERSATION_ENCRYPTION_KEYS", "").split(",")
+    if key.strip()
+]
+
+if AGENT_LLM_PROVIDER not in {"openai", "disabled"}:
+    raise ImproperlyConfigured("AGENT_LLM_PROVIDER must be 'openai' or 'disabled'.")
+if AGENT_MODEL_TIMEOUT_SECONDS < 1:
+    raise ImproperlyConfigured("AGENT_MODEL_TIMEOUT_SECONDS must be at least 1.")

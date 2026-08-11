@@ -9,6 +9,8 @@ from django.utils import timezone
 
 from apps.profiles.models import UserProfile
 
+from .llm import get_model_router
+from .llm.types import AgentIdentity, TaskAnalysis
 from .models import Agent, AgentConnection, DataGrant, Task, TaskCandidate, TaskStep
 from .services import provision_personal_agent
 
@@ -52,11 +54,28 @@ def sanitize_task_brief(request_text: str) -> str:
     return LONG_NUMBER_PATTERN.sub("[number redacted]", brief)
 
 
-def build_discovery_spec(data: dict) -> dict:
-    capabilities = list(dict.fromkeys(data.get("capabilities") or infer_capabilities(data["request_text"])))
-    spec = {"capabilities": capabilities, "brief": sanitize_task_brief(data["request_text"])}
-    if data.get("location"):
-        spec["location"] = data["location"].strip()
+def normalize_capabilities(capabilities: list[str]) -> list[str]:
+    normalized = []
+    for capability in capabilities:
+        value = re.sub(r"[^a-z0-9_]+", "_", capability.lower()).strip("_")[:80]
+        if value and value not in normalized:
+            normalized.append(value)
+    return normalized[:8]
+
+
+def build_discovery_spec(data: dict, analysis: TaskAnalysis | None = None) -> dict:
+    inferred = analysis.capabilities if analysis and analysis.capabilities else infer_capabilities(data["request_text"])
+    capabilities = normalize_capabilities(data.get("capabilities") or inferred)
+    model_brief = analysis.task_brief if analysis else data["request_text"]
+    spec = {
+        "capabilities": capabilities or ["general_assistance"],
+        "brief": sanitize_task_brief(model_brief),
+        "analysis_source": "model" if analysis else "deterministic",
+        "requires_clarification": analysis.requires_clarification if analysis else False,
+    }
+    location = data.get("location") or (analysis.location if analysis else "")
+    if location:
+        spec["location"] = location.strip()
     if data.get("max_budget") is not None:
         spec["budget"] = {"maximum": str(data["max_budget"]), "currency": data.get("currency", "NGN")}
     return spec
@@ -82,19 +101,38 @@ def candidate_score(agent: Agent, spec: dict) -> tuple[Decimal, list[str]] | Non
 @transaction.atomic
 def discover_agents(user, data: dict) -> Task:
     personal_agent, _ = provision_personal_agent(user)
-    spec = build_discovery_spec(data)
+    identity = AgentIdentity(
+        name=personal_agent.name,
+        network_handle=personal_agent.network_handle,
+        agent_id=str(personal_agent.agent_id),
+        trust_level=personal_agent.trust_level,
+        capabilities=personal_agent.capabilities,
+    )
+    analysis = get_model_router().analyze_task(data["request_text"], identity)
+    spec = build_discovery_spec(data, analysis)
+    deterministic_risk = infer_risk(data["request_text"])
+    risk_order = {Task.RiskLevel.LOW: 0, Task.RiskLevel.MEDIUM: 1, Task.RiskLevel.HIGH: 2}
+    model_risk = analysis.risk_level if analysis else Task.RiskLevel.LOW
+    risk_level = max((deterministic_risk, model_risk), key=lambda value: risk_order.get(value, 2))
     task = Task.objects.create(
         owner=user,
         personal_agent=personal_agent,
         request_text=data["request_text"],
+        agent_response=analysis.user_response if analysis else f"I understood your request. I’m {personal_agent.name}, and I prepared a private task plan.",
         discovery_spec=spec,
-        risk_level=infer_risk(data["request_text"]),
+        risk_level=risk_level,
     )
     TaskStep.objects.bulk_create([
         TaskStep(task=task, position=1, title="Understand request", status=TaskStep.Status.COMPLETED),
         TaskStep(task=task, position=2, title="Resolve compatible agents", status=TaskStep.Status.ACTIVE),
         TaskStep(task=task, position=3, title="Connect and complete task"),
     ])
+
+    if analysis and analysis.intent_type == "conversation":
+        task.status = Task.Status.COMPLETED
+        task.steps.filter(position__in=[2, 3]).update(status=TaskStep.Status.COMPLETED)
+        task.save(update_fields=["status", "updated_at"])
+        return task
 
     ranked = []
     queryset = Agent.objects.filter(

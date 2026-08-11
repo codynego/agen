@@ -1,13 +1,16 @@
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
+from unittest.mock import Mock, patch
 from rest_framework.test import APIClient
 
 from apps.profiles.models import UserProfile
 
 from .models import Agent, AgentConnection, DataGrant, Task, TaskResult
+from .llm.types import TaskAnalysis
 from .services import provision_personal_agent
 
 
+@override_settings(AGENT_LLM_PROVIDER="disabled", OPENAI_API_KEY="")
 class AgenResolverFlowTests(TestCase):
     def setUp(self):
         user_model = get_user_model()
@@ -212,3 +215,43 @@ class AgenResolverFlowTests(TestCase):
         self.assertIn("[number redacted]", task_spec["brief"])
         self.assertNotIn("location", task_spec)
         self.assertNotIn("request_text", inbox.data[0])
+
+    @patch("apps.agents.resolver.get_model_router")
+    def test_model_reply_and_higher_risk_classification_are_used(self, mocked_router):
+        mocked_router.return_value.analyze_task.return_value = TaskAnalysis(
+            intent_type="task",
+            capabilities=["restaurant_search", "reservation"],
+            location="Lagos",
+            risk_level="high",
+            requires_clarification=False,
+            task_brief="Reserve a private dinner in Lagos.",
+            complexity="simple",
+            user_response="I can coordinate the dinner, but I will ask before sensitive actions.",
+        )
+
+        response = self.discover("Reserve a dinner in Lagos")
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["risk_level"], Task.RiskLevel.HIGH)
+        self.assertEqual(response.data["agent_response"], "I can coordinate the dinner, but I will ask before sensitive actions.")
+        self.assertEqual(response.data["discovery_spec"]["analysis_source"], "model")
+
+    @patch("apps.agents.resolver.get_model_router")
+    def test_conversation_is_answered_without_agent_discovery(self, mocked_router):
+        mocked_router.return_value.analyze_task.return_value = TaskAnalysis(
+            intent_type="conversation",
+            capabilities=[],
+            location="",
+            risk_level="low",
+            requires_clarification=False,
+            task_brief="User greeted the agent.",
+            complexity="simple",
+            user_response="Hello. What would you like to get done today?",
+        )
+
+        response = self.discover("Hello Agen")
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["status"], Task.Status.COMPLETED)
+        self.assertEqual(response.data["candidates"], [])
+        self.assertEqual(response.data["agent_response"], "Hello. What would you like to get done today?")

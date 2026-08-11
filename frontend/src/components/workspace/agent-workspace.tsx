@@ -43,6 +43,7 @@ export function AgentWorkspace() {
   const [connection, setConnection] = useState<AgentConnection | null>(null);
   const [resolving, setResolving] = useState(false);
   const [resolverError, setResolverError] = useState("");
+  const [agentReply, setAgentReply] = useState("");
   const hasTask = Boolean(request);
 
   useEffect(() => {
@@ -88,9 +89,11 @@ export function AgentWorkspace() {
     setCandidate(null);
     setConnection(null);
     setResolverError("");
+    setAgentReply("");
     setResolving(true);
     try {
       const task = await discoverAgents(cleanMessage);
+      setAgentReply(task.agent_response);
       const topCandidate = task.candidates[0] || null;
       setCandidate(topCandidate);
       if (topCandidate) {
@@ -159,6 +162,7 @@ export function AgentWorkspace() {
 
         {activeTab === "agent" ? (
           <AgentView
+            agentName={session.personal_agent.name}
             approved={approved}
             autoConnect={autoConnect}
             hasTask={hasTask}
@@ -167,7 +171,8 @@ export function AgentWorkspace() {
             request={request}
             candidate={candidate}
             resolving={resolving}
-            resolverError={resolverError}
+          resolverError={resolverError}
+            agentReply={agentReply}
             onApprove={approveConnection}
             onChoosePrompt={setMessage}
             onMessageChange={setMessage}
@@ -191,9 +196,11 @@ export function AgentWorkspace() {
 }
 
 function AgentView(props: {
+  agentName: string;
   approved: boolean;
   autoConnect: boolean;
   candidate: ResolverCandidate | null;
+  agentReply: string;
   hasTask: boolean;
   listening: boolean;
   message: string;
@@ -221,8 +228,8 @@ function AgentView(props: {
             <div className="chat-thread">
               <div className="chat-time">Just now</div>
               <div className="chat-bubble chat-bubble--user">{props.request}</div>
-              <div className="chat-agent-row"><span className="chat-agent-icon"><Icon name="spark" /></span><div className="chat-bubble chat-bubble--agent">{props.resolving ? "I understand. I am checking the Agen Resolver for a verified specialist." : props.resolverError ? `I could not complete discovery: ${props.resolverError}` : props.candidate ? `I found ${props.candidate.name}. ${props.approved ? "The scoped connection is approved and ready." : "I need your approval before I connect."}` : "I could not find a verified agent with the required capabilities yet."}</div></div>
-              {props.candidate ? <ConnectionCard approved={props.approved} candidate={props.candidate} onApprove={props.onApprove} /> : null}
+              {props.resolving ? <AgentWorkingState agentName={props.agentName} /> : <div className="chat-agent-row"><span className="chat-agent-icon"><Icon name="spark" /></span><div className="chat-bubble chat-bubble--agent">{props.resolverError ? `I could not complete discovery: ${props.resolverError}` : props.candidate ? `${props.agentReply} I found ${props.candidate.name}. ${props.approved ? "The scoped connection is approved and ready." : "I need your approval before I connect."}` : props.agentReply || "I could not find a verified agent with the required capabilities yet."}</div></div>}
+              {!props.resolving && props.candidate ? <ConnectionCard approved={props.approved} candidate={props.candidate} onApprove={props.onApprove} /> : null}
             </div>
           ) : (
             <div className="agent-welcome">
@@ -254,6 +261,23 @@ function AgentView(props: {
         <section className="context-card"><div className="context-card__head"><span>Connection mode</span><Icon name="shield" /></div><div className="mode-row"><div><strong>{props.autoConnect ? "Automatic" : "Ask every time"}</strong><small>{props.autoConnect ? "Trusted agents can connect automatically" : "You approve each specialist connection"}</small></div><span className={props.autoConnect ? "mode-indicator mode-indicator--auto" : "mode-indicator"}>{props.autoConnect ? "Auto" : "Manual"}</span></div></section>
         <section className="context-privacy"><Icon name="shield" /><div><strong>Private by design</strong><span>Your data is only shared when a task requires it.</span></div></section>
       </aside>
+    </div>
+  );
+}
+
+function AgentWorkingState({ agentName }: { agentName: string }) {
+  return (
+    <div className="agent-thinking" role="status" aria-live="polite">
+      <div className="agent-thinking__head">
+        <span className="agent-thinking__orb"><Icon name="spark" /><i /><i /></span>
+        <div><strong>{agentName} is working</strong><small>Processing privately</small></div>
+        <span className="agent-thinking__pulse"><i /><i /><i /></span>
+      </div>
+      <div className="agent-thinking__steps" aria-hidden="true">
+        <span><i />Understanding your request</span>
+        <span><i />Checking permissions and risk</span>
+        <span><i />Resolving trusted capabilities</span>
+      </div>
     </div>
   );
 }
